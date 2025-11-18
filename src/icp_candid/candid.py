@@ -859,11 +859,11 @@ class PrincipalClass(PrimitiveType):
 
     def decodeValue(self, b: Pipe, t: Type):
         self.checkType(t)
+        res = safeReadByte(b)
+        if leb128.u.decode(res) != 1:
+            raise ValueError("Cannot decode principal")
         length = leb128uDecode(b)
-        raw = safeRead(b, length)
-        if raw == b"\x00":
-            return P.from_str("aaaaa-aa")
-        return P.from_hex(raw.hex())
+        return P.from_hex(safeRead(b, length).hex())
 
     @property
     def name(self) -> str: return "principal"
