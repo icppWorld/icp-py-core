@@ -71,10 +71,14 @@ All update calls now target **Boundary Node v3** endpoints:
 `/api/v3/canister/<canister_id>/call`
 
 ### 🔒 Certificate Verification
-Enable verifiable responses via **BLS12-381** signatures with `blst`:
+Certificate verification is **enabled by default** for security. Verifies responses via **BLS12-381** signatures with `blst`:
 
 ```python
-agent.update("canister-id", "method_name", [{'type': Types.Nat, 'value': 2}], verify_certificate=True)
+# Default: verification enabled
+agent.update("canister-id", "method_name", [{'type': Types.Nat, 'value': 2}])
+
+# To disable (for compatibility/testing):
+agent.update("canister-id", "method_name", [{'type': Types.Nat, 'value': 2}], verify_certificate=False)
 ```
 
 ---
@@ -104,7 +108,6 @@ result = agent.update(
     "wcrzb-2qaaa-aaaap-qhpgq-cai",
     "set",
     [{'type': Types.Nat, 'value': 2}],
-    verify_certificate=True,
     return_type=[Types.Nat],
 )
 ```
@@ -169,8 +172,8 @@ client = Client("https://ic0.app")
 iden = Identity()
 agent = Agent(iden, client)
 
-# Update (auto-encode [42])
-agent.update("wcrzb-2qaaa-aaaap-qhpgq-cai", "set_value", [42], verify_certificate=True)
+# Update (auto-encode [42], certificate verification enabled by default)
+agent.update("wcrzb-2qaaa-aaaap-qhpgq-cai", "set_value", [42])
 
 # Query (auto-encode empty args)
 res = agent.query("wcrzb-2qaaa-aaaap-qhpgq-cai", "get_value", None, return_type=[Types.Nat])

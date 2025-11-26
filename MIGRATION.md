@@ -101,23 +101,27 @@ reply = agent.query("ryjl3-tyaaa-aaaaa-aaaba-cai", "get_value", None, return_typ
 ```python
 from icp_core import encode
 raw = encode([42])          # pre-encode manually if needed
-result = agent.update("ryjl3-tyaaa-aaaaa-aaaba-cai", "set_value", raw, verify_certificate=True)
+result = agent.update("ryjl3-tyaaa-aaaaa-aaaba-cai", "set_value", raw)
 ```
 
 ---
 
-## 5) Certificate Verification (Optional but Recommended)
+## 5) Certificate Verification (Enabled by Default)
 
-You can enable verification on updates:
+Certificate verification is **enabled by default** for security. All update methods verify the BLS signature chain (root/subnet) using the official **blst** Python binding:
 
 ```python
-agent.update(..., verify_certificate=True)
-# or:
-agent.update_raw(..., verify_certificate=True)
+# Default behavior: verification enabled
+agent.update(...)
+agent.update_raw(...)
+
+# To disable verification (for compatibility/testing):
+agent.update(..., verify_certificate=False)
+agent.update_raw(..., verify_certificate=False)
 ```
 
-- This verifies the BLS signature chain (root/subnet) using the official **blst** Python binding.
 - Install blst from source (not on PyPI). See the project README for steps.
+- If blst is not installed and verification is enabled, calls will fail. Disable verification if blst is unavailable.
 
 ---
 
@@ -147,7 +151,7 @@ You can continue to use the low-level `*_raw` methods if you need full control, 
 1. Replace imports to use `icp_core` (or subpackages).
 2. Stop manually encoding args for `query`/`update` unless you want to pass **raw bytes**.
 3. Ensure your network allows **/api/v3/.../call**.
-4. (Optional) Install **blst** and enable `verify_certificate=True` for stronger security.
+4. Install **blst** for certificate verification (enabled by default). If blst is unavailable, you can disable verification with `verify_certificate=False`.
 5. For self-authenticating principals, pass **SPKI DER** (not raw 32-byte pubkeys).
 
 ---
@@ -161,8 +165,8 @@ client = Client("https://ic0.app")
 iden = Identity(privkey="...hex...")
 agent = Agent(iden, client)
 
-# Update (auto-encode)
-agent.update("ryjl3-tyaaa-aaaaa-aaaba-cai", "set_value", [42], verify_certificate=True)
+# Update (auto-encode, certificate verification enabled by default)
+agent.update("ryjl3-tyaaa-aaaaa-aaaba-cai", "set_value", [42])
 
 # Query (auto-encode empty args), decode as Nat
 out = agent.query("ryjl3-tyaaa-aaaaa-aaaba-cai", "get_value", None, return_type=[Types.Nat])

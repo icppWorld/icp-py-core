@@ -1,13 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+- **Certificate verification now enabled by default**  
+  - `Agent.update_raw()` and `Agent.update_raw_async()` now default to `verify_certificate=True` for maximum security.  
+  - Users can still disable verification with `verify_certificate=False` for compatibility or testing purposes.  
+  - This change ensures the most secure option is used by default, protecting against unverified responses from boundary nodes.
+
 ## [1.0.0] - 2025-10-20
 
 ### Added
-- **Optional certificate verification**  
+- **Certificate verification**  
   - Introduced BLS12-381 certificate verification using the official [`blst`](https://github.com/supranational/blst) Python binding.  
-  - New parameter `verify_certificate` in `Agent.update_raw`.  
-  - When `verify_certificate=True`, update calls are verified against the IC’s certified responses.  
+  - New parameter `verify_certificate` in `Agent.update_raw` and `Agent.update_raw_async`.  
+  - When `verify_certificate=True`, update calls are verified against the IC's certified responses.  
   - Includes full unit test coverage for verification scenarios.  
+  - **Note:** In later versions, certificate verification is enabled by default for security.  
 
 ### Changed
 - **Endpoint upgrade**  

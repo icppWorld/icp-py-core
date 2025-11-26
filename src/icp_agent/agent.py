@@ -278,7 +278,7 @@ class Agent:
     # ----------- Update (call + poll) -----------
 
     def update_raw(self, canister_id, method_name, arg, return_type=None,
-                   effective_canister_id=None, verify_certificate: bool = False):
+                   effective_canister_id=None, verify_certificate: bool = True):
         req = {
             "request_type": "call",
             "sender": self.identity.sender().bytes,
@@ -343,7 +343,7 @@ class Agent:
             raise RuntimeError(f"Unknown status: {status}")
 
     async def update_raw_async(self, canister_id, method_name, arg, return_type=None,
-                               effective_canister_id=None, verify_certificate: bool = False,
+                               effective_canister_id=None, verify_certificate: bool = True,
                                **kwargs):
         req = {
             "request_type": "call",
