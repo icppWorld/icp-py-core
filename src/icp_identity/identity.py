@@ -187,7 +187,7 @@ class Identity:
         """
         Returns (der_pubkey, signature).
           - Ed25519: 64-byte signature over raw message.
-          - secp256k1: DER-encoded ECDSA signature over SHA-256(message), canonical low-S.
+          - secp256k1: 64-byte raw ECDSA signature (r||s) over SHA-256(message), canonical low-S.
         """
         if self.anonymous:
             return (None, None)
@@ -200,7 +200,7 @@ class Identity:
             sig = self.sk.sign(
                 msg,
                 hashfunc=hashlib.sha256,
-                sigencode=ecdsa_util.sigencode_der_canonize,  # enforce low-S
+                sigencode=ecdsa_util.sigencode_string_canonize,  # 64-byte raw r||s with canonical low-S
             )
             return (self._der_pubkey, sig)
 
@@ -210,7 +210,7 @@ class Identity:
         """
         Local verification helper:
           - Ed25519: raw signature over raw message.
-          - secp256k1: DER-encoded signature over SHA-256(message).
+          - secp256k1: 64-byte raw signature (r||s) over SHA-256(message).
         """
         if isinstance(msg, str):
             msg = bytes.fromhex(msg)
@@ -222,7 +222,7 @@ class Identity:
                 return self.vk.verify(sig, msg)
             if self.key_type == "secp256k1":
                 return self.vk.verify(
-                    sig, msg, hashfunc=hashlib.sha256, sigdecode=ecdsa_util.sigdecode_der
+                    sig, msg, hashfunc=hashlib.sha256, sigdecode=ecdsa_util.sigdecode_string
                 )
         except Exception:
             return False
