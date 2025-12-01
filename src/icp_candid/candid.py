@@ -864,7 +864,11 @@ class PrincipalClass(PrimitiveType):
         if flag != b"\x01":
             raise ValueError(f"Expected principal flag 0x01, got {flag.hex()}")
         length = leb128uDecode(b)
-        return P.from_hex(safeRead(b, length).hex())
+        raw = safeRead(b, length)
+        # Candid encodes empty principal (aaaaa-aa) as 0x00
+        if raw == b"\x00":
+            return P.from_str("aaaaa-aa")
+        return P.from_hex(raw.hex())
 
     @property
     def name(self) -> str: return "principal"

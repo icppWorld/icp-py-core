@@ -15,10 +15,10 @@ class TestCandidBasics:
 
     def test_principal_encode(self):
         res = encode([{'type': Types.Principal, 'value': 'aaaaa-aa'}])
-        assert res.hex() == "4449444c0001680100"
+        assert res.hex() == "4449444c000168010100"
 
     def test_principal_decode(self):
-        data = bytes.fromhex("4449444c0001680100")
+        data = bytes.fromhex("4449444c000168010100")
         res = decode(data)
         assert len(res) == 1
         assert res[0]["type"] == 'principal'
@@ -35,6 +35,26 @@ class TestCandidBasics:
         assert len(res) == 1
         assert res[0]["type"] == 'principal'
         assert res[0]["value"].to_str() == 'xzgcn-xbt3r-nhvsl-52jlc-nl5dc-zxkbo-2ghyc-z72s5-htxbe-se35n-jqe'
+
+    def test_principal_encode_decode_3(self):
+        """Test encoding and decoding a 29-byte principal.
+
+        Principal: ytoqu-ey42w-sb2ul-m7xgn-oc7xo-i4btp-kuxjc-b6pt4-dwdzu-kfqs4-nae
+        Hex bytes: 1cd5a41d516cfdccd70bf7723819bd54ba441f3e7c1d879a28b0971a02
+        """
+        principal_str = 'ytoqu-ey42w-sb2ul-m7xgn-oc7xo-i4btp-kuxjc-b6pt4-dwdzu-kfqs4-nae'
+        
+        # Test encode
+        res_encode = encode([{'type': Types.Principal, 'value': principal_str}])
+        expected_encoded = "4449444c000168011d1cd5a41d516cfdccd70bf7723819bd54ba441f3e7c1d879a28b0971a02"
+        assert res_encode.hex() == expected_encoded
+        
+        # Test decode
+        data = bytes.fromhex(expected_encoded)
+        res_decode = decode(data)
+        assert len(res_decode) == 1
+        assert res_decode[0]["type"] == 'principal'
+        assert res_decode[0]["value"].to_str() == principal_str
 
     def test_record_encode(self):
         record = Types.Record({'foo': Types.Text, 'bar': Types.Int})
