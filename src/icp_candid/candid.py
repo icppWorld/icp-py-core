@@ -851,17 +851,18 @@ class PrincipalClass(PrimitiveType):
         # Some Principal libs return empty bytes for 'aaaaa-aa'; Candid expects 0x00.
         if len(buf) == 0:
             buf = b"\x00"
+        flag = b"\x01"
         l = leb128.u.encode(len(buf))
-        return l + buf
+        return flag + l + buf
 
     def encodeType(self, typeTable: TypeTable) -> bytes:
         return leb128.i.encode(TypeIds.Principal.value)
 
     def decodeValue(self, b: Pipe, t: Type):
         self.checkType(t)
-        res = safeReadByte(b)
-        if leb128.u.decode(res) != 1:
-            raise ValueError("Cannot decode principal")
+        flag = safeReadByte(b)
+        if flag != b"\x01":
+            raise ValueError(f"Expected principal flag 0x01, got {flag.hex()}")
         length = leb128uDecode(b)
         return P.from_hex(safeRead(b, length).hex())
 

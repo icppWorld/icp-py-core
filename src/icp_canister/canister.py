@@ -842,14 +842,18 @@ class PrincipalClass(PrimitiveType):
             buf = val
         else:
             raise ValueError("Principal should be string or bytes.")
+        flag = b"\x01"
         l = leb128.u.encode(len(buf))
-        return l + buf
+        return flag + l + buf
 
     def encodeType(self, typeTable: TypeTable) -> bytes:
         return leb128.i.encode(TypeIds.Principal.value)
 
     def decodeValue(self, b: Pipe, t: Type):
         self.checkType(t)
+        flag = safeReadByte(b)
+        if flag != b"\x01":
+            raise ValueError(f"Expected principal flag 0x01, got {flag.hex()}")
         length = leb128uDecode(b)
         return P.from_hex(safeRead(b, length).hex())
 
