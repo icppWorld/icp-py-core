@@ -15,10 +15,10 @@ class TestCandidBasics:
 
     def test_principal_encode(self):
         res = encode([{'type': Types.Principal, 'value': 'aaaaa-aa'}])
-        assert res.hex() == "4449444c000168010100"
+        assert res.hex() == "4449444c0001680100"
 
     def test_principal_decode(self):
-        data = bytes.fromhex("4449444c000168010100")
+        data = bytes.fromhex("4449444c0001680100")
         res = decode(data)
         assert len(res) == 1
         assert res[0]["type"] == 'principal'

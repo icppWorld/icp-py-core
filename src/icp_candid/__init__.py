@@ -1,5 +1,21 @@
-from .candid import encode, decode, Types
+from .candid import encode, decode, Types, TypeTable
 
-__all__ = ["encode", "decode", "Types"]
+# Lazy loading wrapper for DIDLoader to avoid ImportErrors
 
-from . import parser
+# if the underlying rust extension is missing.
+
+class DIDLoader:
+
+    def __new__(cls, *args, **kwargs):
+
+        try:
+
+            from .did_loader import DIDLoader as _RealLoader
+
+        except ImportError:
+
+            raise ImportError("The 'ic_candid_parser' extension is required to use DIDLoader. Please install it via pip.")
+
+        return _RealLoader(*args, **kwargs)
+
+__all__ = ["encode", "decode", "Types", "TypeTable", "DIDLoader"]
