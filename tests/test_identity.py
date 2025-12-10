@@ -39,7 +39,7 @@ dUjS98An2Ge7Y5ydwjDH1QY1cOfH3w==
         assert iden.key_type == 'secp256k1'
         # Verify that we can get the private and public keys
         assert len(iden.privkey) == 64  # 32 bytes = 64 hex chars
-        assert len(iden.pubkey) == 130  # 65 bytes (uncompressed) = 130 hex chars
+        assert len(iden.pubkey) == 128  # 64 bytes (x||y coordinates, no 0x04 prefix) = 128 hex chars
         assert iden.der_pubkey is not None
         assert len(iden.der_pubkey) > 0
 

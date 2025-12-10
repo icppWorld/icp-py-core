@@ -99,7 +99,7 @@ class Identity:
     Ed25519 / secp256k1 identity for the Internet Computer.
     - Self-authenticating Principal derives from the SPKI DER public key.
     - Ed25519 signs the raw message (RFC 8032, no prehash).
-    - secp256k1 signs/verify with SHA-256 and canonical DER(low-S) signatures.
+    - secp256k1 signs/verify with SHA-256 and 64-byte raw signatures (r||s) with canonical low-S.
     """
 
     def __init__(self, privkey: str = "", type: str = "ed25519", anonymous: bool = False) -> None:

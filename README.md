@@ -211,7 +211,7 @@ See [ROADMAP.md](./ROADMAP.md)
 
 ## 🔖 Version
 
-- Current release: **v1.0.0**
+- Current release: **v2.0.0**
 
 ---
 
