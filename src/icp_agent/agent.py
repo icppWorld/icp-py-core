@@ -317,6 +317,8 @@ class Agent:
 
             if certified_status == "replied":
                 reply_data = certificate.lookup_reply(request_id)
+                if reply_data is None:
+                    raise RuntimeError(f"Certificate lookup failed: reply data not found for request {request_id.hex()}")
                 return decode(reply_data, return_type)
             elif certified_status == "rejected":
                 rejection = certificate.lookup_request_rejection(request_id)
@@ -519,6 +521,8 @@ class Agent:
 
         if status_str == "replied":
             reply_bytes = certificate.lookup_reply(req_id)
+            if reply_bytes is None:
+                raise RuntimeError(f"Certificate lookup failed: reply data not found for request {req_id.hex()}")
             return status_str, reply_bytes
         elif status_str == "rejected":
             rejection_obj = certificate.lookup_request_rejection(req_id)
@@ -570,6 +574,8 @@ class Agent:
 
         if status_str == "replied":
             reply_bytes = certificate.lookup_reply(req_id)
+            if reply_bytes is None:
+                raise RuntimeError(f"Certificate lookup failed: reply data not found for request {req_id.hex()}")
             return status_str, reply_bytes
         elif status_str == "rejected":
             rejection_obj = certificate.lookup_request_rejection(req_id)

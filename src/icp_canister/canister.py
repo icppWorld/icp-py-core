@@ -91,5 +91,6 @@ class Canister:
 
     def __getattr__(self, name):
         if name in self.methods:
-            return getattr(self, name)
+            # Use object.__getattribute__ to avoid infinite recursion
+            return object.__getattribute__(self, name)
         raise AttributeError(f"'Canister' object has no attribute '{name}'")

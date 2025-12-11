@@ -26,7 +26,7 @@ def subnet_canister_ranges(agent: Agent, canister_id: str, subnet_id: str) -> li
     ranges = certificate.lookup(path)
     return list(
         map(lambda range: 
-            list(map(lambda item: Principal(bytes=item), range)),  
+            list(map(lambda item: Principal(item), range)),  
         cbor2.loads(ranges))
         )
 
@@ -42,4 +42,4 @@ def canister_controllers(agent: Agent, canister_id: str) -> list[Principal]:
     raw_cert = agent.read_state_raw(canister_id, [path])
     certificate = Certificate(raw_cert)
     controllers = certificate.lookup(path)
-    return list(map(lambda item: Principal(bytes=item), cbor2.loads(controllers)))
+    return list(map(lambda item: Principal(item), cbor2.loads(controllers)))

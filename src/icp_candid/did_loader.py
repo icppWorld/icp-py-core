@@ -12,7 +12,7 @@ except ImportError:
 
     except ImportError:
 
-        pass 
+        ic_candid_parser = None
 
 from .candid import Types
 

@@ -264,7 +264,7 @@ def _map_delegation(delegation: dict) -> dict:
     """
     exp = delegation["delegation"]["expiration"]
     if isinstance(exp, str):
-        exp_val = int(exp, 16) if exp.lower().startswith("0x") else int(exp, 16)
+        exp_val = int(exp, 16) if exp.lower().startswith("0x") else int(exp)
     else:
         exp_val = int(exp)
 
