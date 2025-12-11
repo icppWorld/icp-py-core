@@ -284,6 +284,8 @@ service : {
 }
 """
 
-class CyclesWallet:
+from .canister import Canister
+
+class CyclesWallet(Canister):
     def __init__(self, agent, wallet_id):
         super().__init__(agent, wallet_id, wallet_did)

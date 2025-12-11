@@ -60,6 +60,8 @@ service ic : {
 }
 """
 
-class Management():
+from .canister import Canister
+
+class Management(Canister):
     def __init__(self, agent):
         super().__init__(agent, "aaaaa-aa", management_did)

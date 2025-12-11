@@ -56,18 +56,34 @@ class Canister:
             arg_types = method_type.argTypes
             ret_types = method_type.retTypes
             
-            # 2. Construct parameter list conforming to encode requirements
+            # 2. Handle kwargs: if kwargs are provided and no args, convert kwargs to a single record argument
+            # This allows calling methods like: method(field1=val1, field2=val2) for single-record methods
+            if kwargs and not args and len(arg_types) == 1:
+                # Single record parameter: kwargs can be used directly
+                args = (kwargs,)
+            elif kwargs:
+                # If both args and kwargs are provided, kwargs are ignored (use args)
+                # This is intentional: Candid methods typically use positional args with dict values
+                pass
+            
+            # 3. Validate argument count
+            if len(args) != len(arg_types):
+                raise TypeError(
+                    f"{name}() takes {len(arg_types)} argument(s) but {len(args)} were given"
+                )
+            
+            # 4. Construct parameter list conforming to encode requirements
             processed_args = []
             for i, val in enumerate(args):
                 if i < len(arg_types):
                     processed_args.append({'type': arg_types[i], 'value': val})
             
-            # 3. Determine if it's a Query or Update call
+            # 5. Determine if it's a Query or Update call
             # annotations is a list, e.g. ['query'] or []
             annotations = method_type.annotations
             is_query = 'query' in annotations
 
-            # 4. Execute network request using Agent's high-level query/update methods
+            # 6. Execute network request using Agent's high-level query/update methods
             # These methods automatically encode args and decode return values
             if is_query:
                 res = self.agent.query(
@@ -84,7 +100,7 @@ class Canister:
                     return_type=ret_types
                 )
             
-            # 5. Return the result (already decoded by query/update methods)
+            # 7. Return the result (already decoded by query/update methods)
             return res
             
         return method
