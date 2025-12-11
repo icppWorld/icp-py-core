@@ -22,14 +22,14 @@ class TestDIDLoader(unittest.TestCase):
     @patch('icp_candid.did_loader.ic_candid_parser')
     def test_primitive_parsing(self, mock_parser):
         """测试基础类型的加载"""
-        # [更新] Mock 数据匹配新的 Rust 输出格式 (External Tagging)
+        # [Actual Format] Use actual Rust parser format: {"type": "Prim", "value": "text"}
         mock_json = json.dumps({
             "env": [],
             "actor": {
                 "methods": [{
                     "name": "greet",
-                    "args": [{"Prim": "text"}], # 旧: "text" -> 新: {"Prim": "text"}
-                    "rets": [{"Prim": "bool"}], # 旧: "bool" -> 新: {"Prim": "bool"}
+                    "args": [{"type": "Prim", "value": "text"}],
+                    "rets": [{"type": "Prim", "value": "bool"}],
                     "modes": ["query"]
                 }]
             }
@@ -51,15 +51,17 @@ class TestDIDLoader(unittest.TestCase):
     @patch('icp_candid.did_loader.ic_candid_parser')
     def test_record_parsing(self, mock_parser):
         """测试 Record 类型及字段转换"""
+        # [Actual Format] Use actual Rust parser format
         mock_json = json.dumps({
             "env": [
                 {
                     "name": "User",
-                    "def": { # Rust 端已经 rename 为 "def"
-                        "Record": {
-                            "name": {"Prim": "text"}, # 包裹 Prim
-                            "age": {"Prim": "nat8"}   # 包裹 Prim
-                        }
+                    "datatype": {
+                        "type": "Record",
+                        "value": [
+                            ["name", {"type": "Prim", "value": "text"}],
+                            ["age", {"type": "Prim", "value": "nat8"}]
+                        ]
                     }
                 }
             ],
@@ -87,15 +89,17 @@ class TestDIDLoader(unittest.TestCase):
     @patch('icp_candid.did_loader.ic_candid_parser')
     def test_recursive_type(self, mock_parser):
         """测试递归类型的构建 (List)"""
+        # [Actual Format] Use actual Rust parser format
         mock_json = json.dumps({
             "env": [
                 {
                     "name": "List",
-                    "def": {
-                        "Record": {
-                            "head": {"Prim": "int"}, # 包裹 Prim
-                            "tail": {"Opt": {"Id": "List"}}  # 引用自身
-                        }
+                    "datatype": {
+                        "type": "Record",
+                        "value": [
+                            ["head", {"type": "Prim", "value": "int"}],
+                            ["tail", {"type": "Opt", "value": {"type": "Id", "value": "List"}}]
+                        ]
                     }
                 }
             ],
@@ -121,15 +125,17 @@ class TestDIDLoader(unittest.TestCase):
     @patch('icp_candid.did_loader.ic_candid_parser')
     def test_tuple_handling(self, mock_parser):
         """测试 Tuple 识别逻辑 (数字键 Record)"""
+        # [Actual Format] Use actual Rust parser format: {"type": "Record", "value": [["key", type], ...]}
         mock_json = json.dumps({
             "env": [
                 {
                     "name": "Pair",
-                    "def": {
-                        "Record": {
-                            "0": {"Prim": "nat"},  # 包裹 Prim
-                            "1": {"Prim": "text"}  # 包裹 Prim
-                        }
+                    "datatype": {
+                        "type": "Record",
+                        "value": [
+                            ["0", {"type": "Prim", "value": "nat"}],
+                            ["1", {"type": "Prim", "value": "text"}]
+                        ]
                     }
                 }
             ],

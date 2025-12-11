@@ -671,11 +671,9 @@ class RecordClass(ConstructType):
 
             if h in self._field_map: raise ValueError(f"Hash collision {k}")
 
-            # Format field name: if k is an integer (hash), use _hash format
-            if isinstance(k, int):
-                field_name = f"_{k}"
-            else:
-                field_name = str(k)
+            # [CRITICAL FIX] Use simple string "0", "1" for integer keys.
+            # Do NOT use "_0". This allows tryAsTuple and encodeValue to work correctly.
+            field_name = str(k)
             
             self._field_map[h] = (field_name, v)
 

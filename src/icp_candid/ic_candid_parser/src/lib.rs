@@ -2,8 +2,7 @@ use candid_parser::syntax::Binding;
 use pyo3::prelude::*;
 use candid_parser::{IDLProg};
 use candid_parser::syntax::{Dec, IDLType};
-use serde::Serialize;
-use std::collections::BTreeMap; // 引入 BTreeMap 以生成 JSON 对象
+use serde::{Serialize, Serializer};
 
 // --- 1. Define intermediate JSON protocol ---
 // We define a clear JSON structure as the communication protocol between Rust and Python
@@ -17,8 +16,7 @@ struct ParsedResult {
 #[derive(Serialize)]
 struct DefEntry {
     name: String,
-    // [FIX 1] Rename 'datatype' to 'def' to match Python's expectation
-    #[serde(rename = "def")] 
+    // Python loader expects 'datatype' field name
     datatype: JsonType,
 }
 
@@ -36,26 +34,28 @@ struct MethodEntry {
     modes: Vec<String>, // "query", "oneway"
 }
 
-// [FIX 2] Remove #[serde(tag=...)] to use External Tagging (default).
-// This produces {"Vec": ...} instead of {"type": "Vec", "value": ...}
-// matching the Python loader logic: tag = list(t_node.keys())[0]
+// Custom serialization to ensure consistent format: {"type": "...", "value": ...}
+// All types including unit variants (Principal, Empty, etc.) should have "value" field
+// This matches Python loader's expectation: {"type": ..., "value": ...}
+// Record and Variant use Vec<(String, JsonType)> to serialize as [["key", type], ...]
+// which matches Python's expected array format
 #[derive(Serialize)]
+#[serde(tag = "type", content = "value")]
 enum JsonType {
     Prim(String),                    // nat, int, text...
-    Principal,
+    Principal(()),                   // Unit tuple to ensure "value" field (null)
     Vec(Box<JsonType>),
     Opt(Box<JsonType>),
-    // [FIX 3] Use BTreeMap instead of Vec<(String, Type)>
-    // This ensures serialization as JSON Object {"k": "v"} instead of Array [["k","v"]]
-    // BTreeMap is used to keep keys sorted (deterministic output).
-    Record(BTreeMap<String, JsonType>), 
-    Variant(BTreeMap<String, JsonType>),
+    // Use Vec<(String, JsonType)> to serialize as [["key", type], ...]
+    // This matches Python loader's expectation for array format
+    Record(Vec<(String, JsonType)>), 
+    Variant(Vec<(String, JsonType)>),
     Func { args: Vec<JsonType>, rets: Vec<JsonType>, modes: Vec<String> },
     Service(Vec<MethodEntry>),
     Id(String),                      // Reference to other type (type A = B)
-    Empty,
-    Reserved,
-    Unknown,
+    Empty(()),                       // Unit tuple to ensure "value" field (null)
+    Reserved(()),                    // Unit tuple to ensure "value" field (null)
+    Unknown(()),                     // Unit tuple to ensure "value" field (null)
 }
 
 // --- 2. Conversion logic: Candid AST -> JSON ---
@@ -66,23 +66,24 @@ fn convert_type(t: &IDLType) -> JsonType {
             let s = format!("{:?}", p).to_lowercase();
             JsonType::Prim(s)
         },
-        IDLType::PrincipalT => JsonType::Principal,
+        IDLType::PrincipalT => JsonType::Principal(()),
         IDLType::VarT(name) => JsonType::Id(name.clone()),
         IDLType::OptT(inner) => JsonType::Opt(Box::new(convert_type(inner))),
         IDLType::VecT(inner) => JsonType::Vec(Box::new(convert_type(inner))),
         IDLType::RecordT(fields) => {
-            // Convert Vec<Field> to BTreeMap for JSON Map output
-            let mut fs = BTreeMap::new();
-            for f in fields {
-                fs.insert(f.label.to_string(), convert_type(&f.typ));
-            }
+            // Convert Vec<Field> to Vec<(String, JsonType)> for array format
+            // This matches Python loader's expectation: [["key", type], ...]
+            let fs: Vec<(String, JsonType)> = fields.iter()
+                .map(|f| (f.label.to_string(), convert_type(&f.typ)))
+                .collect();
             JsonType::Record(fs)
         },
         IDLType::VariantT(fields) => {
-            let mut fs = BTreeMap::new();
-            for f in fields {
-                fs.insert(f.label.to_string(), convert_type(&f.typ));
-            }
+            // Convert Vec<Field> to Vec<(String, JsonType)> for array format
+            // This matches Python loader's expectation: [["key", type], ...]
+            let fs: Vec<(String, JsonType)> = fields.iter()
+                .map(|f| (f.label.to_string(), convert_type(&f.typ)))
+                .collect();
             JsonType::Variant(fs)
         },
         IDLType::FuncT(func) => {
@@ -158,8 +159,9 @@ fn parse_did(did_content: String) -> PyResult<String> {
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
 }
 
+// [FIXED] Function name MUST match the module name imported in Python (_ic_candid_core)
 #[pymodule]
-fn ic_candid_parser(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _ic_candid_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_did, m)?)?;
     Ok(())
 }

@@ -24,9 +24,10 @@ class DIDLoader:
 
     def load_did_source(self, did_content: str):
 
-        if 'ic_candid_parser' not in globals() and 'ic_candid_parser' not in locals():
+        # [FIX] Check against None instead of globals() dict
+        if ic_candid_parser is None:
 
-             raise ImportError("Rust extension 'ic_candid_parser' is required. Run 'maturin develop'.")
+             raise ImportError("Rust extension '_ic_candid_core' not found. Please install the package.")
 
              
 
@@ -62,9 +63,9 @@ class DIDLoader:
 
             for entry in data['env']:
 
-                # [Robustness] Support 'def' (New Rust), 'datatype' (Old Rust), or 'type'
+                # [Actual Format] Rust parser returns 'datatype' field (actual transmission format)
 
-                def_node = entry.get('def') or entry.get('datatype') or entry.get('type')
+                def_node = entry.get('datatype')
 
                 if def_node:
 
@@ -106,18 +107,29 @@ class DIDLoader:
 
     def _parse_json_type(self, t_node):
 
-        # Handle string primitives (legacy format)
+        # Handle string primitives (if any)
         if isinstance(t_node, str): return self._prim(t_node)
 
-        # [Compatibility] Handle Rust parser output format: {"type": "Prim", "value": "text"}
-        # This is the CURRENT format returned by the Rust extension
-        if isinstance(t_node, dict) and 'type' in t_node and 'value' in t_node:
-            tag = t_node['type']
-            val = t_node['value']
-        else:
-            # Handle legacy format: {"Prim": "text"}
-            tag = list(t_node.keys())[0]
-            val = t_node[tag]
+        # [Actual Format] Rust parser returns {"type": "Prim", "value": "text"} format
+        # This is the actual transmission format from Rust extension
+        if not isinstance(t_node, dict) or 'type' not in t_node:
+            raise ValueError(f"Unexpected JSON type format: {t_node}. Expected {{'type': ..., ...}}")
+        
+        tag = t_node['type']
+        
+        # [SPEC] According to Candid spec, Principal is a primitive type.
+        # However, in Rust parser implementation, Principal is a unit variant,
+        # which serde serializes as {"type": "Principal"} without "value" field.
+        # This is consistent with serde's default behavior for unit variants.
+        # We handle Principal specially here to match the actual implementation.
+        if tag == 'Principal':
+            return Types.Principal
+        
+        # Other types require 'value' field
+        if 'value' not in t_node:
+            raise ValueError(f"Unexpected JSON type format: {t_node}. Expected {{'type': ..., 'value': ...}}")
+        
+        val = t_node['value']
 
         if tag == 'Prim': return self._prim(val)
 
@@ -130,46 +142,41 @@ class DIDLoader:
         elif tag == 'Record':
             fields = {}
             
-            # [Compatibility] Handle Rust parser format: {"type": "Record", "value": [["key", type], ...]}
-            if isinstance(val, list):
-                for item in val:
-                    if isinstance(item, list) and len(item) == 2:
-                        k, v = item
-                        # Keep string keys as strings to support tryAsTuple() detection
-                        key = k  # Keep original format for tuple detection
-                        fields[key] = self._parse_json_type(v)
-            else:
-                # Handle legacy format: {"Record": {"key": type, ...}}
-                for k, v in val.items():
-                    # Keep string numeric keys as strings for tuple detection
-                    key = k  # Keep original format
-                    fields[key] = self._parse_json_type(v)
+            # [Actual Format] Rust parser returns Record as array: {"type": "Record", "value": [["key", type], ...]}
+            # This is the actual transmission format from Rust extension
+            if not isinstance(val, list):
+                raise ValueError(f"Unexpected Record format: expected array, got {type(val).__name__}")
+            
+            for item in val:
+                if not isinstance(item, list) or len(item) != 2:
+                    raise ValueError(f"Unexpected Record item format: expected [key, type], got {item}")
+                k, v = item
+                # Correctly handle integer keys for Tuples
+                key = int(k) if isinstance(k, str) and k.isdigit() else k
+                fields[key] = self._parse_json_type(v)
 
             return Types.Record(fields)
 
         elif tag == 'Variant':
             fields = {}
             
-            # [Compatibility] Handle Rust parser format: {"type": "Variant", "value": [["key", type], ...]}
-            if isinstance(val, list):
-                for item in val:
-                    if isinstance(item, list) and len(item) == 2:
-                        k, v = item
-                        key = int(k) if isinstance(k, str) and k.isdigit() else k
-                        fields[key] = (self._parse_json_type(v) if v else None)
-            else:
-                # Handle legacy format: {"Variant": {"key": type, ...}}
-                for k, v in val.items():
-                    key = int(k) if k.isdigit() else k
-                    fields[key] = (self._parse_json_type(v) if v else None)
+            # [Actual Format] Rust parser returns Variant as array: {"type": "Variant", "value": [["key", type], ...]}
+            # This is the actual transmission format from Rust extension
+            if not isinstance(val, list):
+                raise ValueError(f"Unexpected Variant format: expected array, got {type(val).__name__}")
+            
+            for item in val:
+                if not isinstance(item, list) or len(item) != 2:
+                    raise ValueError(f"Unexpected Variant item format: expected [key, type], got {item}")
+                k, v = item
+                key = int(k) if isinstance(k, str) and k.isdigit() else k
+                fields[key] = (self._parse_json_type(v) if v else None)
 
             return Types.Variant(fields)
 
         elif tag == 'Id':
 
             return self.type_env.get(val) or Types.Rec()
-
-        elif tag == 'Principal': return Types.Principal
 
         elif tag == 'Func':
 
