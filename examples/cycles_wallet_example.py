@@ -1,13 +1,15 @@
 """
-Example demonstrating query and update calls to the ICP Cycles Wallet canister.
+Example demonstrating query calls to the ICP Cycles Wallet canister.
 
 This example shows how to:
-- Query wallet balance (query call)
-- Query wallet API version (query call)
-- Query wallet name (query call)
-- Query controllers (query call)
-- Send cycles (update call - requires cycles)
-- Create canister (update call - requires cycles)
+- Query wallet API version
+- Query wallet name
+- Query wallet balance (64-bit and 128-bit)
+- Query controllers and custodians
+- List addresses
+
+Note: Update calls (e.g., wallet_send, wallet_create_canister) require
+authenticated identity and actual cycles. They are not demonstrated here.
 """
 
 import sys
@@ -19,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from icp_agent import Agent, Client
 from icp_identity import Identity
 from icp_canister import CyclesWallet
+from helpers import get_result_value, safe_get_nested_value, print_section, handle_exception
 
 # Configuration
 # Note: Replace with your actual cycles wallet canister ID
@@ -38,9 +41,7 @@ def main():
         agent = Agent(identity, client)
         print("[+] Connected to IC mainnet")
     except Exception as e:
-        print(f"[!] Network connection failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Network connection", e)
         return
 
     # Check if wallet ID is configured
@@ -58,156 +59,96 @@ def main():
         wallet = CyclesWallet(agent, WALLET_CANISTER_ID)
         print(f"[+] Cycles wallet canister initialized: {WALLET_CANISTER_ID}")
     except Exception as e:
-        print(f"[!] Failed to initialize cycles wallet: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Cycles wallet initialization", e)
         return
 
-    # Example 1: Query call - Get wallet API version
-    print("\n[1] Query Call: Get Wallet API Version")
-    print("-" * 60)
+    # Example 1: Query wallet API version
+    print_section("[1] Query Call: Get Wallet API Version")
     try:
         result = wallet.wallet_api_version()
-        if isinstance(result, list) and len(result) > 0:
-            version = result[0]
+        version = get_result_value(result)
+        if version is not None:
             print(f"[+] Wallet API version: {version}")
-        else:
-            print(f"[!] Unexpected result: {result}")
     except Exception as e:
-        print(f"[!] Query failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Query wallet API version", e)
 
-    # Example 2: Query call - Get wallet name
-    print("\n[2] Query Call: Get Wallet Name")
-    print("-" * 60)
+    # Example 2: Query wallet name
+    print_section("[2] Query Call: Get Wallet Name")
     try:
         result = wallet.name()
-        if isinstance(result, list) and len(result) > 0:
-            name = result[0]
-            if name:
-                print(f"[+] Wallet name: {name}")
-            else:
-                print("[+] Wallet name: (not set)")
+        name = get_result_value(result)
+        if name:
+            print(f"[+] Wallet name: {name}")
         else:
-            print(f"[!] Unexpected result: {result}")
+            print("[+] Wallet name: (not set)")
     except Exception as e:
-        print(f"[!] Query failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Query wallet name", e)
 
-    # Example 3: Query call - Get wallet balance
-    print("\n[3] Query Call: Get Wallet Balance")
-    print("-" * 60)
+    # Example 3: Query wallet balance
+    print_section("[3] Query Call: Get Wallet Balance")
     try:
         result = wallet.wallet_balance()
-        if isinstance(result, list) and len(result) > 0:
-            val = result[0]
-            if isinstance(val, dict) and 'value' in val:
-                balance_dict = val['value']
-                amount = balance_dict.get('amount') or (list(balance_dict.values())[0] if balance_dict else None)
-                if amount is not None:
-                    cycles = amount / 1_000_000_000_000.0  # Convert to T cycles
-                    print(f"[+] Wallet balance: {cycles:.6f} T cycles ({amount} cycles)")
-                else:
-                    print(f"[!] Unable to extract balance from: {balance_dict}")
-            else:
-                print(f"[!] Unexpected result format: {result}")
-        else:
-            print(f"[!] Unexpected result: {result}")
+        balance_dict = get_result_value(result)
+        if balance_dict:
+            amount = safe_get_nested_value(balance_dict, 'amount') or (list(balance_dict.values())[0] if balance_dict else None)
+            if amount is not None:
+                cycles = amount / 1_000_000_000_000.0  # Convert to T cycles
+                print(f"[+] Wallet balance: {cycles:.6f} T cycles ({amount} cycles)")
     except Exception as e:
-        print(f"[!] Query failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Query wallet balance", e)
 
-    # Example 4: Query call - Get wallet balance (128-bit version)
-    print("\n[4] Query Call: Get Wallet Balance (128-bit)")
-    print("-" * 60)
+    # Example 4: Query wallet balance (128-bit version)
+    print_section("[4] Query Call: Get Wallet Balance (128-bit)")
     try:
         result = wallet.wallet_balance128()
-        if isinstance(result, list) and len(result) > 0:
-            val = result[0]
-            if isinstance(val, dict) and 'value' in val:
-                balance_dict = val['value']
-                amount = balance_dict.get('amount') or (list(balance_dict.values())[0] if balance_dict else None)
-                if amount is not None:
-                    cycles = amount / 1_000_000_000_000.0  # Convert to T cycles
-                    print(f"[+] Wallet balance (128-bit): {cycles:.6f} T cycles ({amount} cycles)")
-                else:
-                    print(f"[!] Unable to extract balance from: {balance_dict}")
-            else:
-                print(f"[!] Unexpected result format: {result}")
-        else:
-            print(f"[!] Unexpected result: {result}")
+        balance_dict = get_result_value(result)
+        if balance_dict:
+            amount = safe_get_nested_value(balance_dict, 'amount') or (list(balance_dict.values())[0] if balance_dict else None)
+            if amount is not None:
+                cycles = amount / 1_000_000_000_000.0  # Convert to T cycles
+                print(f"[+] Wallet balance (128-bit): {cycles:.6f} T cycles ({amount} cycles)")
     except Exception as e:
-        print(f"[!] Query failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Query wallet balance (128-bit)", e)
 
-    # Example 5: Query call - Get controllers
-    print("\n[5] Query Call: Get Controllers")
-    print("-" * 60)
+    # Example 5: Query controllers
+    print_section("[5] Query Call: Get Controllers")
     try:
         result = wallet.get_controllers()
-        if isinstance(result, list) and len(result) > 0:
-            controllers = result[0]
-            if isinstance(controllers, list):
-                print(f"[+] Found {len(controllers)} controllers")
-                for i, controller in enumerate(controllers[:5]):  # Show first 5
-                    print(f"    Controller {i+1}: {controller}")
-            else:
-                print(f"[!] Unexpected controllers format: {controllers}")
-        else:
-            print(f"[!] Unexpected result: {result}")
+        controllers = get_result_value(result)
+        if isinstance(controllers, list):
+            print(f"[+] Found {len(controllers)} controllers")
+            for i, controller in enumerate(controllers[:5]):  # Show first 5
+                print(f"    Controller {i+1}: {controller}")
     except Exception as e:
-        print(f"[!] Query failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Query controllers", e)
 
-    # Example 6: Query call - Get custodians
-    print("\n[6] Query Call: Get Custodians")
-    print("-" * 60)
+    # Example 6: Query custodians
+    print_section("[6] Query Call: Get Custodians")
     try:
         result = wallet.get_custodians()
-        if isinstance(result, list) and len(result) > 0:
-            custodians = result[0]
-            if isinstance(custodians, list):
-                print(f"[+] Found {len(custodians)} custodians")
-                for i, custodian in enumerate(custodians[:5]):  # Show first 5
-                    print(f"    Custodian {i+1}: {custodian}")
-            else:
-                print(f"[!] Unexpected custodians format: {custodians}")
-        else:
-            print(f"[!] Unexpected result: {result}")
+        custodians = get_result_value(result)
+        if isinstance(custodians, list):
+            print(f"[+] Found {len(custodians)} custodians")
+            for i, custodian in enumerate(custodians[:5]):  # Show first 5
+                print(f"    Custodian {i+1}: {custodian}")
     except Exception as e:
-        print(f"[!] Query failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Query custodians", e)
 
-    # Example 7: Query call - List addresses
-    print("\n[7] Query Call: List Addresses")
-    print("-" * 60)
+    # Example 7: Query addresses
+    print_section("[7] Query Call: List Addresses")
     try:
         result = wallet.list_addresses()
-        if isinstance(result, list) and len(result) > 0:
-            addresses = result[0]
-            if isinstance(addresses, list):
-                print(f"[+] Found {len(addresses)} addresses in address book")
-                for i, address in enumerate(addresses[:3]):  # Show first 3
-                    if isinstance(address, dict):
-                        addr_id = address.get('id') or (list(address.values())[0] if address else None)
-                        name = address.get('name')
-                        print(f"    Address {i+1}: ID={addr_id}, Name={name or 'N/A'}")
-            else:
-                print(f"[!] Unexpected addresses format: {addresses}")
-        else:
-            print(f"[!] Unexpected result: {result}")
+        addresses = get_result_value(result)
+        if isinstance(addresses, list):
+            print(f"[+] Found {len(addresses)} addresses in address book")
+            for i, address in enumerate(addresses[:3]):  # Show first 3
+                if isinstance(address, dict):
+                    addr_id = address.get('id') or (list(address.values())[0] if address else None)
+                    name = address.get('name')
+                    print(f"    Address {i+1}: ID={addr_id}, Name={name or 'N/A'}")
     except Exception as e:
-        print(f"[!] Query failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Query addresses", e)
 
-    # Note: Update calls require authenticated identity and cycles
     print("\n" + "=" * 60)
     print("Note: Update calls (e.g., wallet_send, wallet_create_canister)")
     print("require authenticated identity and actual cycles. They are not")

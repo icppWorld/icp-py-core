@@ -43,3 +43,13 @@ icp_candid = [
   "parser/assets/*.jar",
   "parser/assets/*.sh",
 ]
+
+[tool.pytest.ini_options]
+# Filter deprecation warnings from blst (SWIG binding) library
+# These are known issues in the third-party library and don't affect functionality
+filterwarnings = [
+    "ignore::DeprecationWarning:importlib._bootstrap",
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+]

@@ -1,11 +1,17 @@
 """
-Example demonstrating query and update calls to the ICP Management canister.
+Example demonstrating usage of the ICP Management canister.
 
-This example shows how to:
-- Query canister status (query call)
-- Create canister (update call - requires cycles)
-- Update canister settings (update call - requires controller permissions)
-- Install code (update call - requires controller permissions)
+This example shows how to use management canister methods:
+- Query canister status
+- Create canister (requires cycles)
+- Update canister settings (requires controller permissions)
+- Install code (requires controller permissions)
+- Start/Stop canister
+- Delete canister
+
+Note: All management canister operations are update calls and require
+proper authentication and permissions. They are not executed here to
+avoid accidental operations.
 """
 
 import sys
@@ -17,13 +23,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from icp_agent import Agent, Client
 from icp_identity import Identity
 from icp_canister import Management
+from helpers import print_section, handle_exception
 
 # Configuration
 MANAGEMENT_CANISTER_ID = "aaaaa-aa"  # Management canister (system canister)
 
 
 def main():
-    """Main function demonstrating management canister interactions."""
+    """Main function demonstrating management canister usage."""
     print("=" * 60)
     print("ICP Management Canister Example")
     print("=" * 60)
@@ -35,9 +42,7 @@ def main():
         agent = Agent(identity, client)
         print("[+] Connected to IC mainnet")
     except Exception as e:
-        print(f"[!] Network connection failed: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Network connection", e)
         return
 
     # Initialize Management canister
@@ -45,16 +50,11 @@ def main():
         management = Management(agent)
         print("[+] Management canister initialized")
     except Exception as e:
-        print(f"[!] Failed to initialize management canister: {e}")
-        import traceback
-        traceback.print_exc()
+        handle_exception("Management canister initialization", e)
         return
 
-    # Example 1: Query call - Get canister status
-    # Note: This is actually an update call in the management canister
-    # but we'll demonstrate the structure
-    print("\n[1] Canister Status Query")
-    print("-" * 60)
+    # Example 1: Canister status
+    print_section("[1] Canister Status")
     print("[!] Note: canister_status is an update call (not query)")
     print("    It requires controller permissions and a valid canister ID.")
     print("    Example usage:")
@@ -62,9 +62,8 @@ def main():
     print("    result = management.canister_status({'canister_id': principal})")
     print("    ```")
     
-    # Example 2: Create canister structure
-    print("\n[2] Create Canister (Update Call)")
-    print("-" * 60)
+    # Example 2: Create canister
+    print_section("[2] Create Canister")
     print("[!] Note: create_canister is an update call that requires cycles.")
     print("    Example usage:")
     print("    ```python")
@@ -72,9 +71,8 @@ def main():
     print("    ```")
     print("    This will create a new canister and return its ID.")
     
-    # Example 3: Update settings structure
-    print("\n[3] Update Canister Settings (Update Call)")
-    print("-" * 60)
+    # Example 3: Update settings
+    print_section("[3] Update Canister Settings")
     print("[!] Note: update_settings is an update call that requires")
     print("    controller permissions for the target canister.")
     print("    Example usage:")
@@ -91,9 +89,8 @@ def main():
     print("    })")
     print("    ```")
     
-    # Example 4: Install code structure
-    print("\n[4] Install Code (Update Call)")
-    print("-" * 60)
+    # Example 4: Install code
+    print_section("[4] Install Code")
     print("[!] Note: install_code is an update call that requires")
     print("    controller permissions and a WASM module.")
     print("    Example usage:")
@@ -109,8 +106,7 @@ def main():
     print("    ```")
     
     # Example 5: Start/Stop canister
-    print("\n[5] Start/Stop Canister (Update Call)")
-    print("-" * 60)
+    print_section("[5] Start/Stop Canister")
     print("[!] Note: start_canister and stop_canister are update calls.")
     print("    Example usage:")
     print("    ```python")
@@ -122,8 +118,7 @@ def main():
     print("    ```")
     
     # Example 6: Delete canister
-    print("\n[6] Delete Canister (Update Call)")
-    print("-" * 60)
+    print_section("[6] Delete Canister")
     print("[!] Note: delete_canister is an update call that requires")
     print("    the canister to be stopped and have no cycles.")
     print("    Example usage:")
