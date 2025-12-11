@@ -62,22 +62,30 @@ class Canister:
                 if i < len(arg_types):
                     processed_args.append({'type': arg_types[i], 'value': val})
             
-            # 3. Serialize parameters
-            encoded_args = encode(processed_args)
-
-            # 4. Determine if it's a Query or Update call
+            # 3. Determine if it's a Query or Update call
             # annotations is a list, e.g. ['query'] or []
             annotations = method_type.annotations
             is_query = 'query' in annotations
 
-            # 5. Execute network request
+            # 4. Execute network request using Agent's high-level query/update methods
+            # These methods automatically encode args and decode return values
             if is_query:
-                res = self.agent.query_raw(self.canister_id, name, encoded_args)
+                res = self.agent.query(
+                    self.canister_id,
+                    name,
+                    arg=processed_args if processed_args else None,
+                    return_type=ret_types
+                )
             else:
-                res = self.agent.update_raw(self.canister_id, name, encoded_args)
+                res = self.agent.update(
+                    self.canister_id,
+                    name,
+                    arg=processed_args if processed_args else None,
+                    return_type=ret_types
+                )
             
-            # 6. Deserialize return value
-            return decode(res, ret_types)
+            # 5. Return the result (already decoded by query/update methods)
+            return res
             
         return method
 
