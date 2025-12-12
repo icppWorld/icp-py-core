@@ -70,3 +70,6 @@ docs/_build/
 
 # Pyenv
 .python-version
+
+# Maturin auto-generated GitHub workflows (not needed in subdirectories)
+.github/
