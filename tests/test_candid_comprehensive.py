@@ -13,7 +13,7 @@ from icp_candid.candid import encode, decode, Types, LEB128, Pipe
 
 
 class TestLEB128(unittest.TestCase):
-    """测试底层 LEB128 编码解码的正确性与鲁棒性"""
+    """Test correctness and robustness of low-level LEB128 encoding/decoding"""
 
     def test_unsigned(self):
         cases = [
@@ -21,7 +21,7 @@ class TestLEB128(unittest.TestCase):
             (127, b"\x7f"),
             (128, b"\x80\x01"),
             (624485, b"\xe5\x8e\x26"),
-            (2**64, b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02")  # 大数测试
+            (2**64, b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02")  # Large number test
         ]
         for val, expected in cases:
             self.assertEqual(LEB128.encode_u(val), expected)
@@ -31,7 +31,7 @@ class TestLEB128(unittest.TestCase):
         cases = [
             (0, b"\x00"),
             (-1, b"\x7f"),
-            (127, b"\xff\x00"),  # 需要 padding
+            (127, b"\xff\x00"),  # Requires padding
             (-128, b"\x80\x7f"),
             (1, b"\x01"),
             (-123456, b"\xc0\xbb\x78")
@@ -41,13 +41,13 @@ class TestLEB128(unittest.TestCase):
             self.assertEqual(LEB128.decode_i(Pipe(expected)), val)
 
     def test_float_safety(self):
-        """确保传入浮点数不会导致死循环"""
-        # 应该被强转为 int
+        """Ensure passing float does not cause infinite loop"""
+        # Should be cast to int
         self.assertEqual(LEB128.encode_u(12.5), b"\x0c")
 
 
 class TestPrimitives(unittest.TestCase):
-    """测试基础类型的编解码"""
+    """Test encoding/decoding of primitive types"""
 
     def test_basic_roundtrip(self):
         params = [
@@ -71,7 +71,7 @@ class TestPrimitives(unittest.TestCase):
 
 
 class TestConstructedTypes(unittest.TestCase):
-    """测试复杂构造类型"""
+    """Test complex constructed types"""
 
     def test_opt(self):
         # Opt Null
@@ -85,7 +85,7 @@ class TestConstructedTypes(unittest.TestCase):
         self.assertEqual(dec[0]['value'], [10])
 
     def test_record_hash_order(self):
-        """验证 Record 字段是否按 Hash 排序"""
+        """Verify if Record fields are sorted by Hash"""
         # key "a" hash ~97, key "z" hash ~122
         # Wire order should be 'a' then 'z'
         t = Types.Record({'z': Types.Nat, 'a': Types.Nat})
@@ -110,10 +110,10 @@ class TestConstructedTypes(unittest.TestCase):
 
 
 class TestPerformanceAndRegression(unittest.TestCase):
-    """性能测试与 Bug 回归测试"""
+    """Performance tests and bug regression tests"""
 
     def test_blob_optimization(self):
-        """性能: 验证 Vec Nat8 是否启用了内存直读直写"""
+        """Performance: Verify if Vec Nat8 has enabled direct memory read/write"""
         # 1MB data
         data = b'\x01' * 1024 * 1024
 
@@ -122,14 +122,14 @@ class TestPerformanceAndRegression(unittest.TestCase):
         t1 = time.time()
 
         print(f"\n[Perf] 1MB Blob Encode Time: {t1-t0:.5f}s")
-        # 如果是纯循环处理，Python 通常需要 0.5s 以上
+        # If pure loop processing, Python usually needs more than 0.5s
         self.assertLess(t1 - t0, 0.2, "Blob optimization seems inactive (too slow)")
 
         decoded = decode(encoded, [Types.Vec(Types.Nat8)])
         self.assertEqual(decoded[0]['value'], data)
 
     def test_vec_int8_crash_fix(self):
-        """回归: 验证 Vec Int8 包含负数时是否会崩溃"""
+        """Regression: Verify if Vec Int8 crashes when containing negative numbers"""
         # Bug: bytes([-1]) throws ValueError.
         # Fix: Should use list comprehension for Int8.
         data = [-128, -1, 0, 1, 127]
@@ -143,21 +143,21 @@ class TestPerformanceAndRegression(unittest.TestCase):
             self.fail(f"Vec Int8 crashed on negative numbers: {e}")
 
     def test_service_double_tag_fix(self):
-        """回归: 验证 Service 编码没有重复的 0x01 Tag"""
-        # Service 应该直接代理 Principal 编码
+        """Regression: Verify Service encoding does not have duplicate 0x01 Tag"""
+        # Service should directly proxy Principal encoding
         # Value: Empty principal (management) -> 0x01 (Tag) + 0x00 (Len)
-        # 如果由 Service 再加一个 Tag，就会变成 0x01 0x01 0x00 (错误)
+        # If Service adds another Tag, it becomes 0x01 0x01 0x00 (error)
 
         encoded = encode([{'type': Types.Service({}), 'value': "aaaaa-aa"}])
 
         # DIDL (4) + TypeTable (1:0) + ArgLen (1:1) + TypeIndex (1) + VALUE
-        # 取最后几个字节观察
+        # Take last few bytes to observe
         payload = encoded[-2:]
         self.assertEqual(payload, b"\x01\x00", f"Service has wrong bytes: {hexlify(encoded)}")
 
 
 class TestRecursion(unittest.TestCase):
-    """测试递归类型 (链表/树)"""
+    """Test recursive types (linked list/tree)"""
 
     def test_linked_list(self):
         # type Node = record { val: nat; next: opt Node }
@@ -170,7 +170,7 @@ class TestRecursion(unittest.TestCase):
         # 1 -> 2 -> None
         data = {'val': 1, 'next': [{'val': 2, 'next': []}]}
 
-        # 如果 TypeTable 索引逻辑有错，这里编码或解码会报错
+        # If TypeTable index logic is wrong, encoding or decoding will error here
         try:
             encoded = encode([{'type': Node, 'value': data}])
             decoded = decode(encoded, [Node])
