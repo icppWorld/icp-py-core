@@ -14,3 +14,6 @@ dist/
 /.idea
 .venv/
 .venv-test/
+
+# Release checklist (local notes)
+RELEASE_CHECKLIST.md

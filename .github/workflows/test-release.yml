@@ -17,24 +17,26 @@ on:
 
 jobs:
   build_wheels_linux_windows:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }} (Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Cover Linux and Windows platforms
+        # Cover Linux and Windows platforms with multiple Python versions
         os: [ubuntu-latest, windows-latest]
+        python: ['3.8', '3.9', '3.10', '3.11', '3.12']
     
     steps:
       - uses: actions/checkout@v4
       
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python }}
           
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          args: --release --strip --out dist --find-interpreter
+          # maturin-action automatically uses the Python from setup-python
+          args: --release --strip --out dist
           sccache: 'true'
           manylinux: auto 
           working-directory: src/icp_candid/ic_candid_parser
@@ -42,37 +44,40 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}-py${{ matrix.python }}
           path: src/icp_candid/ic_candid_parser/dist
           retention-days: 30
 
   build_wheels_macos:
-    name: Build wheels on macOS (${{ matrix.target }})
+    name: Build wheels on macOS (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: macos-latest
     strategy:
       matrix:
         # Build for both Intel (x86_64) and Apple Silicon (aarch64) architectures
+        # with multiple Python versions
         target: [x86_64-apple-darwin, aarch64-apple-darwin]
+        python: ['3.8', '3.9', '3.10', '3.11', '3.12']
     
     steps:
       - uses: actions/checkout@v4
       
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python }}
           
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --strip --out dist --find-interpreter
+          # maturin-action automatically uses the Python from setup-python
+          args: --release --strip --out dist
           sccache: 'true'
           working-directory: src/icp_candid/ic_candid_parser
           
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-macos-${{ matrix.target }}
+          name: wheels-macos-${{ matrix.target }}-py${{ matrix.python }}
           path: src/icp_candid/ic_candid_parser/dist
           retention-days: 30
 
@@ -118,13 +123,23 @@ jobs:
             
             ### Installation
             
-            Download the appropriate wheel file for your platform and install:
+            **Important:** Choose the correct wheel file based on your Python architecture:
             
+            1. Check your Python architecture:
+            ```bash
+            python -c 'import platform; print(platform.machine())'
+            ```
+            
+            2. Download the matching wheel:
+            - If output is `x86_64`: Use wheel with `x86_64` or `universal2` in filename
+            - If output is `arm64`: Use wheel with `arm64` or `universal2` in filename
+            
+            3. Install:
             ```bash
             pip install <wheel-file-name>.whl
             ```
             
-            Or install directly from GitHub:
+            Or install directly from GitHub (will auto-select compatible wheel):
             
             ```bash
             pip install git+https://github.com/${{ github.repository }}.git@${{ github.event.inputs.tag_name }}
@@ -134,7 +149,10 @@ jobs:
             
             - Linux (manylinux)
             - Windows (x64, x86)
-            - macOS (Intel, Apple Silicon)
+            - macOS Intel (x86_64)
+            - macOS Apple Silicon (arm64)
+            
+            **Note for macOS users:** If you have Apple Silicon (M1/M2) but `platform.machine()` shows `x86_64`, you're running Python through Rosetta. Use the `x86_64` wheel or install native arm64 Python.
             
             ### Feedback
             

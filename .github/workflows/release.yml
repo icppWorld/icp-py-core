@@ -6,29 +6,30 @@ on:
       - 'v*' # Trigger only on tags (e.g., v0.1.0)
 
 jobs:
-  build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+  build_wheels_linux_windows:
+    name: Build wheels on ${{ matrix.os }} (Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Cover mainstream platforms: Linux, Windows, macOS (Intel & M1/M2)
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Cover Linux and Windows platforms with multiple Python versions
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.8', '3.9', '3.10', '3.11', '3.12']
     
     steps:
       - uses: actions/checkout@v4
       
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python }}
           
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          # maturin-action automatically uses the Python from setup-python
           # Key parameters:
           # --release: Enable compiler optimizations
           # --strip: Remove symbol table to reduce size
-          # --find-interpreter: Automatically locate Python
-          args: --release --strip --out dist --find-interpreter
+          args: --release --strip --out dist
           sccache: 'true'
           # manylinux: auto automatically builds packages compatible with older Linux (CentOS 7/Ubuntu 18.04)
           manylinux: auto 
@@ -37,7 +38,42 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}-py${{ matrix.python }}
+          path: src/icp_candid/ic_candid_parser/dist
+
+  build_wheels_macos:
+    name: Build wheels on macOS (${{ matrix.target }}, Python ${{ matrix.python }})
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        # Build for both Intel (x86_64) and Apple Silicon (aarch64) architectures
+        # with multiple Python versions for compatibility
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+        python: ['3.8', '3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          # maturin-action automatically uses the Python from setup-python
+          # Key parameters:
+          # --release: Enable compiler optimizations
+          # --strip: Remove symbol table to reduce size
+          args: --release --strip --out dist
+          sccache: 'true'
+          working-directory: src/icp_candid/ic_candid_parser
+          
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}-py${{ matrix.python }}
           path: src/icp_candid/ic_candid_parser/dist
 
   # Build source distribution as fallback (for non-mainstream platforms that can compile from source)
@@ -56,19 +92,144 @@ jobs:
           name: wheels-sdist
           path: src/icp_candid/ic_candid_parser/dist
 
-  release:
-    name: Publish to PyPI
+  # Build main package wheels (Python package that depends on Rust extension)
+  build_main_package:
+    name: Build main package on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    needs: [build_wheels_linux_windows, build_wheels_macos, build_sdist]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Download Rust extension wheels
+        uses: actions/download-artifact@v4
+        with:
+          # Download all wheels (will filter by OS and Python version when installing)
+          pattern: wheels-*
+          path: rust_wheels
+          merge-multiple: true
+      
+      - name: Install Rust extension wheel
+        run: |
+          python -m pip install --upgrade pip
+          # Find a compatible wheel for Python 3.10 on this OS
+          # For macOS, try to find aarch64 wheel first (for Apple Silicon), then x86_64
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            # Try aarch64 first (Apple Silicon)
+            WHEEL=$(find rust_wheels -name "*aarch64*apple*darwin*cp310*.whl" | head -1)
+            if [ -z "$WHEEL" ]; then
+              # Fallback to x86_64
+              WHEEL=$(find rust_wheels -name "*x86_64*apple*darwin*cp310*.whl" | head -1)
+            fi
+          else
+            # For Linux and Windows, match by OS name
+            OS_NAME="${{ matrix.os }}"
+            if [ "$OS_NAME" == "ubuntu-latest" ]; then
+              WHEEL=$(find rust_wheels -name "*manylinux*cp310*.whl" | head -1)
+            elif [ "$OS_NAME" == "windows-latest" ]; then
+              WHEEL=$(find rust_wheels -name "*win_amd64*cp310*.whl" | head -1)
+            fi
+          fi
+          # Fallback to any cp310 wheel if OS-specific search failed
+          if [ -z "$WHEEL" ]; then
+            WHEEL=$(find rust_wheels -name "*cp310*.whl" | head -1)
+          fi
+          # Final fallback to any wheel
+          if [ -z "$WHEEL" ]; then
+            WHEEL=$(find rust_wheels -name "*.whl" | head -1)
+          fi
+          if [ -n "$WHEEL" ]; then
+            pip install "$WHEEL"
+          else
+            echo "Error: No compatible wheel found"
+            exit 1
+          fi
+      
+      - name: Install build tools
+        run: |
+          pip install build wheel
+      
+      - name: Build main package wheel
+        run: |
+          python -m build --wheel
+      
+      - name: Upload main package wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-package-${{ matrix.os }}
+          path: dist/*.whl
+
+  # Build main package sdist
+  build_main_sdist:
+    name: Build main package sdist
     runs-on: ubuntu-latest
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels_linux_windows, build_wheels_macos, build_sdist]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+      
+      - name: Build main package sdist
+        run: |
+          python -m build --sdist
+      
+      - name: Upload main package sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-package-sdist
+          path: dist/*.tar.gz
+
+  # Publish Rust extension to PyPI first
+  publish_rust_extension:
+    name: Publish Rust Extension to PyPI
+    runs-on: ubuntu-latest
+    needs: [build_wheels_linux_windows, build_wheels_macos, build_sdist]
     environment: pypi
     permissions:
       id-token: write
     steps:
+      - uses: actions/checkout@v4
+      
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
       
-      - name: Publish to PyPI
+      - name: Publish ic_candid_parser to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+  # Publish main package to PyPI (depends on Rust extension being published)
+  publish_main_package:
+    name: Publish Main Package to PyPI
+    runs-on: ubuntu-latest
+    needs: [build_main_package, build_main_sdist, publish_rust_extension]
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: main-package-*
+          path: dist
+          merge-multiple: true
+      
+      - name: Publish icp-py-core to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
