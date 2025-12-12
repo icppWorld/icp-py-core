@@ -16,13 +16,13 @@ on:
         type: string
 
 jobs:
-  build_wheels:
+  build_wheels_linux_windows:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Cover mainstream platforms: Linux, Windows, macOS (Intel & M1/M2)
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Cover Linux and Windows platforms
+        os: [ubuntu-latest, windows-latest]
     
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +46,36 @@ jobs:
           path: src/icp_candid/ic_candid_parser/dist
           retention-days: 30
 
+  build_wheels_macos:
+    name: Build wheels on macOS (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        # Build for both Intel (x86_64) and Apple Silicon (aarch64) architectures
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --strip --out dist --find-interpreter
+          sccache: 'true'
+          working-directory: src/icp_candid/ic_candid_parser
+          
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: src/icp_candid/ic_candid_parser/dist
+          retention-days: 30
+
   build_sdist:
     runs-on: ubuntu-latest
     steps:
@@ -65,7 +95,7 @@ jobs:
   create_test_release:
     name: Create Test Release
     runs-on: ubuntu-latest
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels_linux_windows, build_wheels_macos, build_sdist]
     if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
