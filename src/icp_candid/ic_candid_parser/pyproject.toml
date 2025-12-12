@@ -5,6 +5,8 @@ build-backend = "maturin"
 [tool.maturin]
 # [FIXED] Module name must match Python import and Rust #[pymodule] function name
 module-name = "icp_candid._ic_candid_core"
+# Ensure .pyi files are included in the package
+include = ["**/*.pyi"]
 
 [project]
 name = "ic_candid_parser"

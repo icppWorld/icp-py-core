@@ -34,7 +34,8 @@ This version introduces a modular architecture, protocol upgrades, and new APIs 
 pip install icp-py-core
 ```
 
-> If you use the Candid parser, we pin `antlr4-python3-runtime==4.9.3`.  
+> The Candid parser uses a Rust extension with pre-built binary wheels for all platforms.  
+> No Rust compiler is required for installation.  
 > For optional certificate verification, see the **blst** section below.
 
 ---
