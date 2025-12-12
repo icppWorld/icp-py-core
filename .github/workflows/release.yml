@@ -116,6 +116,7 @@ jobs:
           merge-multiple: true
       
       - name: Install Rust extension wheel
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           # Find a compatible wheel for Python 3.10 on this OS
