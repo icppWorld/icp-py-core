@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from icp_agent import Agent, Client
 from icp_identity import Identity
 from icp_canister import Governance
-from helpers import get_result_value, safe_get_nested_value, print_section, handle_exception
+from helpers import get_result_value, print_section, handle_exception
 
 # Configuration
 GOVERNANCE_CANISTER_ID = "rrkah-fqaaa-aaaaa-aaaaq-cai"  # NNS Governance mainnet

@@ -8,9 +8,9 @@ from enum import IntEnum
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import cbor2
-import leb128
 
 from icp_principal.principal import Principal
+from icp_candid.candid import LEB128
 
 
 # ----------------------------- Constants & helpers -----------------------------
@@ -475,7 +475,7 @@ class Certificate:
         if data is None:
             raise ValueError("Missing 'time' in certificate")
         try:
-            return leb128.u.decode(bytes(data))
+            return LEB128.decode_u_bytes(bytes(data))
         except Exception as e:
             raise ValueError("Invalid 'time' encoding (expected ULEB128)") from e
 

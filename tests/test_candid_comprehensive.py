@@ -1,7 +1,6 @@
 import unittest
 import sys
 import os
-import math
 import time
 from binascii import hexlify
 

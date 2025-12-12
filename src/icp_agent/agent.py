@@ -3,13 +3,12 @@ import time
 import asyncio
 import cbor2
 import httpx
-import leb128
 
 from icp_candid import decode
 from icp_certificate.certificate import IC_ROOT_KEY, Certificate
 from icp_identity import DelegateIdentity
 from icp_principal import Principal
-from icp_candid.candid import encode
+from icp_candid.candid import encode, LEB128
 
 IC_REQUEST_DOMAIN_SEPARATOR = b"\x0Aic-request"
 
@@ -63,7 +62,7 @@ def to_request_id(d):
         if isinstance(v, list):
             v = encode_list(v)
         if isinstance(v, int):
-            v = bytes(leb128.u.encode(v))
+            v = LEB128.encode_u(v)
         if not isinstance(k, bytes):
             k = k.encode()
         if not isinstance(v, bytes):
@@ -91,7 +90,7 @@ def encode_list(l):
         if isinstance(item, list):
             v = encode_list(item)
         elif isinstance(item, int):
-            v = bytes(leb128.u.encode(item))
+            v = LEB128.encode_u(item)
         elif isinstance(item, (bytes, bytearray, memoryview)):
             v = bytes(item)
         elif isinstance(item, str):

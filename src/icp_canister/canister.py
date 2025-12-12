@@ -1,5 +1,4 @@
 from icp_candid.did_loader import DIDLoader
-from icp_candid import encode, decode, Types
 
 class Canister:
     def __init__(self, agent, canister_id, candid_str=None):

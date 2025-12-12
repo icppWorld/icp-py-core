@@ -18,7 +18,8 @@ import math
 from abc import ABCMeta, abstractmethod
 from enum import Enum
 from struct import pack, unpack
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Union  
+
 
 # --- Zero-Dependency Robustness ---
 
@@ -173,6 +174,16 @@ class LEB128:
             result |= -(1 << shift)
 
         return result
+
+    @staticmethod
+    def decode_u_bytes(data: bytes) -> int:
+        """Decode unsigned LEB128 from bytes directly (convenience method)."""
+        return LEB128.decode_u(Pipe(data))
+
+    @staticmethod
+    def decode_i_bytes(data: bytes) -> int:
+        """Decode signed LEB128 from bytes directly (convenience method)."""
+        return LEB128.decode_i(Pipe(data))
 
 # -----------------------------
 

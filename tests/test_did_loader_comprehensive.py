@@ -2,7 +2,7 @@ import unittest
 import sys
 import os
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Add src directory to path
 project_root = os.path.join(os.path.dirname(__file__), '..')
@@ -11,7 +11,7 @@ sys.path.insert(0, src_path)
 
 # 导入待测模块
 from icp_candid.did_loader import DIDLoader
-from icp_candid.candid import Types, RecordClass, RecClass, FuncClass
+from icp_candid.candid import RecordClass, RecClass, FuncClass
 
 
 class TestDIDLoader(unittest.TestCase):
