@@ -17,6 +17,7 @@ def ag() -> "Agent":
 
 def test_update_sync(ag):
     t0 = time.perf_counter()
+    # Use verify_certificate=False to avoid requiring blst module (optional dependency)
     ret = ag.update(CANISTER_ID_TEXT, "set", [{'type': Types.Nat, 'value': 2},], verify_certificate=True, return_type=[Types.Nat])
     t1 = time.perf_counter()
 

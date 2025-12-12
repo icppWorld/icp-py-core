@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger only on tags (e.g., v0.1.0)
+
+jobs:
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # Cover mainstream platforms: Linux, Windows, macOS (Intel & M1/M2)
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: auto
+          # Key parameters:
+          # --release: Enable compiler optimizations
+          # --strip: Remove symbol table to reduce size
+          # --find-interpreter: Automatically locate Python
+          args: --release --strip --out dist --find-interpreter
+          sccache: 'true'
+          # manylinux: auto automatically builds packages compatible with older Linux (CentOS 7/Ubuntu 18.04)
+          manylinux: auto 
+          working-directory: src/icp_candid/ic_candid_parser
+          
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: src/icp_candid/ic_candid_parser/dist
+
+  # Build source distribution as fallback (for non-mainstream platforms that can compile from source)
+  build_sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: src/icp_candid/ic_candid_parser
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: src/icp_candid/ic_candid_parser/dist
+
+  release:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [build_wheels, build_sdist]
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

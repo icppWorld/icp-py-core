@@ -1,0 +1,115 @@
+name: Test Release
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Test release tag (e.g., test-v2.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # Cover mainstream platforms: Linux, Windows, macOS (Intel & M1/M2)
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: auto
+          args: --release --strip --out dist --find-interpreter
+          sccache: 'true'
+          manylinux: auto 
+          working-directory: src/icp_candid/ic_candid_parser
+          
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: src/icp_candid/ic_candid_parser/dist
+          retention-days: 30
+
+  build_sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: src/icp_candid/ic_candid_parser
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: src/icp_candid/ic_candid_parser/dist
+          retention-days: 30
+
+  create_test_release:
+    name: Create Test Release
+    runs-on: ubuntu-latest
+    needs: [build_wheels, build_sdist]
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.tag_name }}
+          name: Test Release ${{ github.event.inputs.tag_name }}
+          body: |
+            ## Test Release
+            
+            This is a **test release** for community testing. Please do not use in production.
+            
+            ### Installation
+            
+            Download the appropriate wheel file for your platform and install:
+            
+            ```bash
+            pip install <wheel-file-name>.whl
+            ```
+            
+            Or install directly from GitHub:
+            
+            ```bash
+            pip install git+https://github.com/${{ github.repository }}.git@${{ github.event.inputs.tag_name }}
+            ```
+            
+            ### Platform Support
+            
+            - Linux (manylinux)
+            - Windows (x64, x86)
+            - macOS (Intel, Apple Silicon)
+            
+            ### Feedback
+            
+            Please report issues and feedback in the [Issues](https://github.com/${{ github.repository }}/issues) section.
+          files: dist/**/*.whl
+          draft: false
+          prerelease: true

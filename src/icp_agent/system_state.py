@@ -1,16 +1,16 @@
-import leb128
 import cbor2
 
 from icp_agent import Agent
 from icp_certificate import Certificate
 from icp_principal import Principal
+from icp_candid.candid import LEB128
 
 
 def time(agent: Agent, canister_id: str) -> int:
     raw_cert = agent.read_state_raw(canister_id, [["time".encode()]])
     certificate = Certificate(raw_cert)
     timestamp = certificate.lookup_time()
-    return leb128.u.decode(timestamp)
+    return LEB128.decode_u_bytes(bytes(timestamp))
 
 def subnet_public_key(agent: Agent, canister_id: str, subnet_id: str) -> str:
     path = ["subnet".encode(), Principal.from_str(subnet_id).bytes, "public_key".encode()]
@@ -25,8 +25,8 @@ def subnet_canister_ranges(agent: Agent, canister_id: str, subnet_id: str) -> li
     certificate = Certificate(raw_cert)
     ranges = certificate.lookup(path)
     return list(
-        map(lambda range: 
-            list(map(lambda item: Principal(bytes=item), range)),  
+        map(lambda range_item: 
+            list(map(Principal, range_item)),  
         cbor2.loads(ranges))
         )
 
@@ -42,4 +42,4 @@ def canister_controllers(agent: Agent, canister_id: str) -> list[Principal]:
     raw_cert = agent.read_state_raw(canister_id, [path])
     certificate = Certificate(raw_cert)
     controllers = certificate.lookup(path)
-    return list(map(lambda item: Principal(bytes=item), cbor2.loads(controllers)))
+    return list(map(Principal, cbor2.loads(controllers)))

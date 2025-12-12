@@ -34,7 +34,8 @@ This version introduces a modular architecture, protocol upgrades, and new APIs 
 pip install icp-py-core
 ```
 
-> If you use the Candid parser, we pin `antlr4-python3-runtime==4.9.3`.  
+> The Candid parser uses a Rust extension with pre-built binary wheels for all platforms.  
+> No Rust compiler is required for installation.  
 > For optional certificate verification, see the **blst** section below.
 
 ---
@@ -122,33 +123,154 @@ print(reply)
 
 ## 🔑 Installing `blst` (optional)
 
-### macOS / Linux
+`blst` is required for certificate verification (enabled by default). If `blst` is not installed, you can disable verification with `verify_certificate=False`.
+
+### Prerequisites
+
+**macOS:**
+```bash
+# Install Xcode Command Line Tools
+xcode-select --install
+
+# Install SWIG (required for Python bindings)
+brew install swig
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get update
+sudo apt-get install build-essential swig python3-dev
+```
+
+**Linux (Fedora/RHEL):**
+```bash
+sudo dnf install gcc gcc-c++ make swig python3-devel
+```
+
+### macOS / Linux Installation
+
+**Method 1: Build and add to PYTHONPATH (recommended for development)**
 
 ```bash
 git clone https://github.com/supranational/blst
 cd blst/bindings/python
 
-# For Apple Silicon (if needed)
+# For Apple Silicon (M1/M2/M3) if you encounter ABI issues:
 # export BLST_PORTABLE=1
 
 python3 run.me
+
+# Temporary (current session only):
 export PYTHONPATH="$PWD:$PYTHONPATH"
+
+# Permanent (add to ~/.bashrc or ~/.zshrc):
+echo 'export PYTHONPATH="/path/to/blst/bindings/python:$PYTHONPATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-**Or copy to site-packages manually:**
+**Method 2: Install to site-packages (recommended for production)**
+
 ```bash
-BLST_SRC="/path/to/blst/bindings/python"
+git clone https://github.com/supranational/blst
+cd blst/bindings/python
+
+# For Apple Silicon (M1/M2/M3) if needed:
+# export BLST_PORTABLE=1
+
+python3 run.me
+
+# Copy to site-packages
+BLST_SRC="$PWD"
 PYBIN="python3"
 
-SITE_PURE="$($PYBIN -c 'import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])')"
-SITE_PLAT="$($PYBIN -c 'import sysconfig; print(sysconfig.get_paths()[\\"platlib\\"])')"
+SITE_PURE="$($PYBIN -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+SITE_PLAT="$($PYBIN -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
 
 cp "$BLST_SRC/blst.py" "$SITE_PURE"/
 cp "$BLST_SRC"/_blst*.so "$SITE_PLAT"/
 ```
 
-### Windows
-Use **WSL2 (Ubuntu)** for best compatibility.
+**Method 3: Install in virtual environment**
+
+```bash
+# Activate your virtual environment first
+source venv/bin/activate  # or: source .venv/bin/activate
+
+git clone https://github.com/supranational/blst
+cd blst/bindings/python
+
+# For Apple Silicon if needed:
+# export BLST_PORTABLE=1
+
+python3 run.me
+
+# Copy to virtual environment's site-packages
+BLST_SRC="$PWD"
+SITE_PURE="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+SITE_PLAT="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
+
+cp "$BLST_SRC/blst.py" "$SITE_PURE"/
+cp "$BLST_SRC"/_blst*.so "$SITE_PLAT"/
+```
+
+### Windows Installation
+
+**Option 1: WSL2 (Ubuntu) - Recommended**
+
+1. Install WSL2 and Ubuntu from Microsoft Store
+2. Follow the Linux installation instructions above in WSL2
+
+**Option 2: Native Windows (Advanced)**
+
+1. Install Visual Studio Build Tools with C++ support
+2. Install SWIG for Windows from [swig.org](http://www.swig.org/download.html)
+3. Install Python 3.8+ with development headers
+4. Follow the Linux build steps in PowerShell or Command Prompt
+5. Note: Windows support is experimental; WSL2 is recommended
+
+### Verify Installation
+
+Test if `blst` is correctly installed:
+
+```python
+try:
+    import blst
+    assert all(hasattr(blst, n) for n in ("P1_Affine", "P2_Affine", "Pairing", "BLST_SUCCESS"))
+    print("✓ blst is installed and working correctly")
+except (ModuleNotFoundError, AssertionError):
+    print("✗ blst is not available or incomplete")
+```
+
+Or test with `icp-py-core`:
+
+```python
+from icp_certificate.certificate import ensure_blst_available
+try:
+    ensure_blst_available()
+    print("✓ blst is available for certificate verification")
+except RuntimeError as e:
+    print(f"✗ {e}")
+```
+
+### Troubleshooting
+
+**Issue: "No module named 'blst'"**
+- Ensure `blst.py` and `_blst*.so` are in your Python path
+- Check `python3 -c "import sys; print(sys.path)"` to see search paths
+- If using virtual environment, ensure it's activated
+
+**Issue: "ABI mismatch" on Apple Silicon**
+- Set `export BLST_PORTABLE=1` before running `python3 run.me`
+- This builds a portable version compatible with all architectures
+
+**Issue: "SWIG not found"**
+- Install SWIG: `brew install swig` (macOS) or `sudo apt-get install swig` (Linux)
+- Ensure SWIG is in your PATH: `which swig`
+
+**Issue: Import succeeds but API is incomplete**
+- Ensure you're using the official `supranational/blst` repository
+- Rebuild: `cd blst/bindings/python && python3 run.me`
+- Check that all required symbols exist: `P1_Affine`, `P2_Affine`, `Pairing`, `BLST_SUCCESS`
 
 ---
 

@@ -252,6 +252,8 @@ service : {
 }
 """
 
-class Ledger():
+from .canister import Canister
+
+class Ledger(Canister):
     def __init__(self, agent):
         super().__init__(agent, "ryjl3-tyaaa-aaaaa-aaaba-cai", ledger_did)
