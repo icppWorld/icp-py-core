@@ -24,7 +24,6 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: auto
           # Key parameters:
           # --release: Enable compiler optimizations
           # --strip: Remove symbol table to reduce size

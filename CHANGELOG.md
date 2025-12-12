@@ -2,6 +2,76 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2025-12-11
+
+### Performance
+
+- **Candid DID Parser Performance Optimization** ⚡
+  - Migrated from Python ANTLR4 implementation to Rust-based `candid-parser` crate
+  - Significant performance improvements with multiple times faster parsing speed
+  - Reduced memory footprint and faster startup time
+  - New Rust extension module (`ic_candid_parser`) with PyO3 bindings
+  - Maintains full backward compatibility with existing API
+
+### Added
+
+- **Comprehensive Example Code Library** 📚
+  - `ledger_example.py` - ICP token transfers, balance queries, transaction history
+  - `governance_example.py` - Neuron management, proposal queries and voting
+  - `cycles_wallet_example.py` - Cycles transfers, wallet operations, canister creation
+  - `management_example.py` - Canister creation, code installation, status queries
+  - `simple_counter_example.py` - Basic query/update calls with error handling
+  - `helpers.py` - Common utility functions and formatted output helpers
+
+- **Enhanced Governance Module**
+  - Complete NNS Governance interface implementation
+  - Proposal creation and management functionality
+  - Voting functionality with full type system support
+  - Neuron management and configuration
+  - Expanded from ~218 lines to 1510 lines with comprehensive coverage
+
+- **New DID Loader Interface**
+  - New `DIDLoader` class providing clean API for DID file parsing
+  - Improved error handling with clearer error messages
+  - Support for recursive type definitions and service interface parsing
+
+- **Testing & Configuration**
+  - New comprehensive test files: `test_did_loader_comprehensive.py`, `test_parser.py`
+  - Enhanced `test_candid_comprehensive.py` with 186 new lines
+  - Pytest warning filters for cleaner test output (filters known `blst` library warnings)
+
+### Changed
+
+- **Canister Module Optimization**
+  - Simplified `canister.py` from 1322 lines to ~112 lines (90%+ reduction)
+  - Improved code structure and maintainability
+  - Better error handling and dynamic method binding support
+  - Maintains full backward compatibility
+
+- **Documentation Improvements**
+  - Expanded `blst` installation guide with detailed instructions (150+ lines)
+  - Added prerequisites for macOS, Linux (Ubuntu/Debian, Fedora/RHEL), and Windows
+  - Three installation methods: development, production, and virtual environment
+  - Complete troubleshooting section for common issues
+  - Installation verification examples
+
+### Removed
+
+- **Legacy ANTLR Parser Files**
+  - Removed `src/icp_candid/parser/DIDParser.py` (1586 lines)
+  - Removed `src/icp_candid/parser/DIDLexer.py` (195 lines)
+  - Removed `src/icp_candid/parser/DIDParserListener.py` (246 lines)
+  - Removed ANTLR-related resource files (`*.g4`, `*.jar`)
+  - Dependency on `antlr4-python3-runtime==4.9.3` no longer required
+
+### Technical Details
+
+- Rust extension implementation with `serde` for JSON serialization
+- Custom `JsonType` enum matching Python expected format
+- Complete error handling and type conversion
+- All 56 tests passing with ~7.3 seconds test duration
+- Net change: +1212 lines (41 files changed, +5951 added, -4739 deleted)
+
 ## [2.0.0] - 2025-12-01
 
 ### Breaking Changes
