@@ -63,6 +63,7 @@ from icp_core import (
     Agent, Client,
     Identity, DelegateIdentity,
     Principal, Certificate,
+    Canister, Ledger, Governance, Management, CyclesWallet,
     encode, decode, Types,
 )
 ```
@@ -74,6 +75,7 @@ All update calls now target **Boundary Node v3** endpoints:
 ### 🔒 Certificate Verification
 Certificate verification is **enabled by default** for security. Verifies responses via **BLS12-381** signatures with `blst`:
 
+**With Agent directly:**
 ```python
 # Default: verification enabled
 agent.update("canister-id", "method_name", [{'type': Types.Nat, 'value': 2}])
@@ -81,6 +83,20 @@ agent.update("canister-id", "method_name", [{'type': Types.Nat, 'value': 2}])
 # To disable (for compatibility/testing):
 agent.update("canister-id", "method_name", [{'type': Types.Nat, 'value': 2}], verify_certificate=False)
 ```
+
+**With Canister wrapper:**
+```python
+# Default: verification enabled (matches Agent.update() behavior)
+canister.set_value(42)
+
+# Explicitly enable (same as default)
+canister.set_value(42, verify_certificate=True)
+
+# Disable verification (when blst is not installed)
+canister.set_value(42, verify_certificate=False)
+```
+
+> **Note:** Both `Agent.update()` and `Canister` methods default to `verify_certificate=True` for security. If `blst` is not installed, you must explicitly pass `verify_certificate=False` to avoid errors.
 
 ---
 
@@ -117,6 +133,107 @@ result = agent.update(
 ```python
 reply = agent.query("wcrzb-2qaaa-aaaap-qhpgq-cai", "get", [])
 print(reply)
+```
+
+### Canister Wrapper (Type-Safe Method Calls)
+The `Canister` class provides a high-level, type-safe interface for interacting with canisters. It automatically parses Candid DID files and creates Python methods that match your canister's interface.
+
+**Creating a Canister instance:**
+```python
+from icp_core import Agent, Client, Identity, Canister
+
+# Setup agent
+client = Client("https://ic0.app")
+identity = Identity()
+agent = Agent(identity, client)
+
+# Define Candid interface
+COUNTER_DID = """
+service : {
+  get : () -> (nat) query;
+  set : (nat) -> (nat)
+}
+"""
+
+# Create Canister wrapper
+counter = Canister(agent, "wcrzb-2qaaa-aaaap-qhpgq-cai", COUNTER_DID)
+```
+
+**Calling canister methods:**
+```python
+# Query call (no arguments)
+value = counter.get()
+print(f"Current value: {value[0]['value']}")
+
+# Update call (with positional argument)
+result = counter.set(42)
+print(f"Set to: {result[0]['value']}")
+
+# Update call with keyword arguments (for record types)
+# If your method takes a single record parameter, you can use kwargs:
+# result = counter.update_profile(name="Alice", age=30)
+```
+
+**Certificate Verification with Canister:**
+By default, `Canister` methods enable certificate verification (`verify_certificate=True`) to match `Agent.update()` behavior for security. You can control this per method call:
+
+```python
+# Default: certificate verification enabled (requires blst)
+result = counter.set(42)  # Uses verify_certificate=True by default
+
+# Explicitly enable verification (same as default)
+result = counter.set(42, verify_certificate=True)
+
+# Disable verification (useful when blst is not installed)
+result = counter.set(42, verify_certificate=False)
+```
+
+**Important Notes:**
+- `verify_certificate` is a **control parameter**, not a method argument. It's extracted from kwargs before processing method arguments.
+- Default value is `True` to match `Agent.update()` default behavior for security.
+- If `blst` is not installed and you don't pass `verify_certificate=False`, update calls will fail.
+- For query calls, certificate verification is not applicable (queries don't return certificates).
+
+**Example: Complete Canister Usage**
+```python
+from icp_core import Agent, Client, Identity, Canister
+
+# Setup
+client = Client("https://ic0.app")
+identity = Identity(anonymous=True)
+agent = Agent(identity, client)
+
+# Define interface
+DID = """
+service : {
+  get : () -> (nat) query;
+  set : (nat) -> (nat);
+  increment : () -> (nat)
+}
+"""
+
+# Create canister wrapper
+counter = Canister(agent, "wcrzb-2qaaa-aaaap-qhpgq-cai", DID)
+
+# Query (no verification needed)
+current = counter.get()
+print(f"Current: {current[0]['value']}")
+
+# Update with verification enabled (default, requires blst)
+try:
+    result = counter.set(100)
+    print(f"Set to: {result[0]['value']}")
+except Exception as e:
+    if "blst" in str(e).lower():
+        # Fallback: disable verification if blst not available
+        result = counter.set(100, verify_certificate=False)
+        print(f"Set to: {result[0]['value']} (verification disabled)")
+    else:
+        raise
+
+# Update with verification explicitly disabled
+result = counter.increment(verify_certificate=False)
+print(f"Incremented: {result[0]['value']}")
 ```
 
 ---
