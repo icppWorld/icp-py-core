@@ -116,36 +116,75 @@ jobs:
           merge-multiple: true
       
       - name: Install Rust extension wheel
-        shell: bash
         run: |
           python -m pip install --upgrade pip
-          # Find a compatible wheel for this OS
-          # Note: maturin builds ABI3 wheels (cp38-abi3) that work with Python 3.8+
-          # For macOS, try to find aarch64 wheel first (for Apple Silicon), then x86_64
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            # Try aarch64 first (Apple Silicon)
-            WHEEL=$(find rust_wheels -name "*aarch64*apple*darwin*.whl" | grep -E "(cp38-abi3|cp310)" | head -1)
-            if [ -z "$WHEEL" ]; then
-              # Fallback to x86_64
-              WHEEL=$(find rust_wheels -name "*x86_64*apple*darwin*.whl" | grep -E "(cp38-abi3|cp310)" | head -1)
-            fi
-          elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            # For Linux, only look for manylinux wheels (exclude Windows wheels)
-            WHEEL=$(find rust_wheels -name "*manylinux*.whl" | grep -v "win" | grep -E "(cp38-abi3|cp310)" | head -1)
-          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            # For Windows, only look for win_amd64 wheels (exclude Linux/macOS wheels)
-            WHEEL=$(find rust_wheels -name "*win_amd64*.whl" | grep -E "(cp38-abi3|cp310)" | head -1)
-          fi
+          python << 'EOF'
+          import os
+          import glob
+          import sys
+          import platform
           
-          if [ -z "$WHEEL" ]; then
-            echo "Error: No compatible wheel found for ${{ matrix.os }}"
-            echo "Available wheels:"
-            find rust_wheels -name "*.whl" | sort
-            exit 1
-          fi
+          os_name = "${{ matrix.os }}"
+          wheels_dir = "rust_wheels"
           
-          echo "Installing wheel: $WHEEL"
-          pip install "$WHEEL"
+          # Find all wheel files
+          wheel_pattern = os.path.join(wheels_dir, "*.whl")
+          all_wheels = glob.glob(wheel_pattern)
+          
+          if not all_wheels:
+              print(f"Error: No wheel files found in {wheels_dir}")
+              sys.exit(1)
+          
+          print(f"Found {len(all_wheels)} wheel files")
+          
+          # Filter wheels based on platform
+          compatible_wheels = []
+          
+          if os_name == "macos-latest":
+              # For macOS, try aarch64 first (Apple Silicon), then x86_64
+              for wheel in all_wheels:
+                  wheel_name = os.path.basename(wheel)
+                  if "aarch64" in wheel_name and "apple" in wheel_name and "darwin" in wheel_name:
+                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
+                          compatible_wheels.insert(0, wheel)  # Prefer aarch64
+                  elif "x86_64" in wheel_name and "apple" in wheel_name and "darwin" in wheel_name:
+                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
+                          compatible_wheels.append(wheel)
+          elif os_name == "ubuntu-latest":
+              # For Linux, only manylinux wheels (exclude Windows and macOS)
+              for wheel in all_wheels:
+                  wheel_name = os.path.basename(wheel)
+                  if "manylinux" in wheel_name and "win" not in wheel_name and "darwin" not in wheel_name:
+                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
+                          compatible_wheels.append(wheel)
+          elif os_name == "windows-latest":
+              # For Windows, only win_amd64 wheels (exclude Linux and macOS)
+              for wheel in all_wheels:
+                  wheel_name = os.path.basename(wheel)
+                  if "win_amd64" in wheel_name and "darwin" not in wheel_name and "manylinux" not in wheel_name:
+                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
+                          compatible_wheels.append(wheel)
+          
+          if not compatible_wheels:
+              print(f"Error: No compatible wheel found for {os_name}")
+              print("Available wheels:")
+              for wheel in sorted(all_wheels):
+                  print(f"  - {os.path.basename(wheel)}")
+              sys.exit(1)
+          
+          # Use the first compatible wheel
+          selected_wheel = compatible_wheels[0]
+          print(f"Installing wheel: {os.path.basename(selected_wheel)}")
+          
+          # Install the wheel
+          import subprocess
+          result = subprocess.run([sys.executable, "-m", "pip", "install", selected_wheel], 
+                                capture_output=True, text=True)
+          if result.returncode != 0:
+              print(f"Error installing wheel: {result.stderr}")
+              sys.exit(1)
+          print("Wheel installed successfully")
+          EOF
       
       - name: Install build tools
         run: |
