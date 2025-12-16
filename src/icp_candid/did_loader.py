@@ -1,18 +1,20 @@
 import json
 
 try:
-
+    # First try: import from icp_candid package (development/local build)
     from . import _ic_candid_core as ic_candid_parser
-
 except ImportError:
-
     try:
-
-        import ic_candid_parser
-
+        # Second try: import from top-level package (when installed via PyPI wheel)
+        # The ic_candid_parser wheel installs as _ic_candid_core package
+        # because it's a separate PyPI package and cannot install into icp_candid namespace
+        from _ic_candid_core import _ic_candid_core as ic_candid_parser
     except ImportError:
-
-        ic_candid_parser = None
+        try:
+            # Third try: alternative direct import
+            import _ic_candid_core._ic_candid_core as ic_candid_parser
+        except ImportError:
+            ic_candid_parser = None
 
 from .candid import Types
 

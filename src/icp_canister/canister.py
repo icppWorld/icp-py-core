@@ -92,11 +92,14 @@ class Canister:
                     return_type=ret_types
                 )
             else:
+                # Get verify_certificate from kwargs if provided, default to False to avoid requiring blst
+                verify_certificate = kwargs.pop('verify_certificate', False)
                 res = self.agent.update(
                     self.canister_id,
                     name,
                     arg=processed_args if processed_args else None,
-                    return_type=ret_types
+                    return_type=ret_types,
+                    verify_certificate=verify_certificate
                 )
             
             # 7. Return the result (already decoded by query/update methods)

@@ -3,8 +3,10 @@ requires = ["maturin>=1.10,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
-# [FIXED] Module name must match Python import and Rust #[pymodule] function name
-module-name = "icp_candid._ic_candid_core"
+# Module name matches actual wheel installation location
+# The wheel installs as a top-level package _ic_candid_core (not under icp_candid namespace)
+# because ic_candid_parser is a separate PyPI package
+module-name = "_ic_candid_core._ic_candid_core"
 # Ensure .pyi files are included in the package
 include = ["**/*.pyi"]
 
