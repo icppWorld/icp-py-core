@@ -128,29 +128,23 @@ jobs:
               # Fallback to x86_64
               WHEEL=$(find rust_wheels -name "*x86_64*apple*darwin*cp310*.whl" | head -1)
             fi
-          else
-            # For Linux and Windows, match by OS name
-            OS_NAME="${{ matrix.os }}"
-            if [ "$OS_NAME" == "ubuntu-latest" ]; then
-              WHEEL=$(find rust_wheels -name "*manylinux*cp310*.whl" | head -1)
-            elif [ "$OS_NAME" == "windows-latest" ]; then
-              WHEEL=$(find rust_wheels -name "*win_amd64*cp310*.whl" | head -1)
-            fi
+          elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+            # For Linux, only look for manylinux wheels
+            WHEEL=$(find rust_wheels -name "*manylinux*cp310*.whl" | head -1)
+          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+            # For Windows, only look for win_amd64 wheels
+            WHEEL=$(find rust_wheels -name "*win_amd64*cp310*.whl" | head -1)
           fi
-          # Fallback to any cp310 wheel if OS-specific search failed
+          
           if [ -z "$WHEEL" ]; then
-            WHEEL=$(find rust_wheels -name "*cp310*.whl" | head -1)
-          fi
-          # Final fallback to any wheel
-          if [ -z "$WHEEL" ]; then
-            WHEEL=$(find rust_wheels -name "*.whl" | head -1)
-          fi
-          if [ -n "$WHEEL" ]; then
-            pip install "$WHEEL"
-          else
-            echo "Error: No compatible wheel found"
+            echo "Error: No compatible wheel found for ${{ matrix.os }} and Python 3.10"
+            echo "Available wheels:"
+            find rust_wheels -name "*.whl" | sort
             exit 1
           fi
+          
+          echo "Installing wheel: $WHEEL"
+          pip install "$WHEEL"
       
       - name: Install build tools
         run: |

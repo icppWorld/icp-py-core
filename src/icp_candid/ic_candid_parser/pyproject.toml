@@ -11,7 +11,7 @@ module-name = "_ic_candid_core._ic_candid_core"
 include = ["**/*.pyi"]
 
 [project]
-name = "ic_candid_parser"
+name = "ic-candid-parser"
 description = "Rust extension for parsing Candid DID files (part of icp-py-core)"
 requires-python = ">=3.8"
 classifiers = [
