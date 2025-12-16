@@ -55,7 +55,11 @@ class Canister:
             arg_types = method_type.argTypes
             ret_types = method_type.retTypes
             
-            # 2. Handle kwargs: if kwargs are provided and no args, convert kwargs to a single record argument
+            # 2. Extract control parameters from kwargs BEFORE processing them as method arguments
+            # verify_certificate is a control parameter for agent.update(), not a method argument
+            verify_certificate = kwargs.pop('verify_certificate', False)
+            
+            # 3. Handle kwargs: if kwargs are provided and no args, convert kwargs to a single record argument
             # This allows calling methods like: method(field1=val1, field2=val2) for single-record methods
             if kwargs and not args and len(arg_types) == 1:
                 # Single record parameter: kwargs can be used directly
@@ -65,24 +69,24 @@ class Canister:
                 # This is intentional: Candid methods typically use positional args with dict values
                 pass
             
-            # 3. Validate argument count
+            # 4. Validate argument count
             if len(args) != len(arg_types):
                 raise TypeError(
                     f"{name}() takes {len(arg_types)} argument(s) but {len(args)} were given"
                 )
             
-            # 4. Construct parameter list conforming to encode requirements
+            # 5. Construct parameter list conforming to encode requirements
             processed_args = []
             for i, val in enumerate(args):
                 if i < len(arg_types):
                     processed_args.append({'type': arg_types[i], 'value': val})
             
-            # 5. Determine if it's a Query or Update call
+            # 6. Determine if it's a Query or Update call
             # annotations is a list, e.g. ['query'] or []
             annotations = method_type.annotations
             is_query = 'query' in annotations
 
-            # 6. Execute network request using Agent's high-level query/update methods
+            # 7. Execute network request using Agent's high-level query/update methods
             # These methods automatically encode args and decode return values
             if is_query:
                 res = self.agent.query(
@@ -92,8 +96,7 @@ class Canister:
                     return_type=ret_types
                 )
             else:
-                # Get verify_certificate from kwargs if provided, default to False to avoid requiring blst
-                verify_certificate = kwargs.pop('verify_certificate', False)
+                # verify_certificate was already extracted in step 2
                 res = self.agent.update(
                     self.canister_id,
                     name,
