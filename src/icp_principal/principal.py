@@ -191,8 +191,8 @@ class AccountIdentifier:
         if not _is_bytes_like(data):
             raise TypeError("AccountIdentifier expects bytes-like")
         b = bytes(data)
-        if len(b) != 36:  # 4-byte CRC + 32-byte hash
-            raise ValueError("AccountIdentifier must be 36 bytes (4 + 32)")
+        if len(b) != 32:  # 4-byte CRC + 28-byte SHA-224 hash
+            raise ValueError("AccountIdentifier must be 32 bytes (4 + 28)")
         self._hash = b
 
     def to_str(self) -> str:
@@ -216,6 +216,6 @@ class AccountIdentifier:
         sha224.update(b"\x0Aaccount-id")
         sha224.update(principal.bytes)
         sha224.update(sub_account.to_bytes(32, "big"))
-        h = sha224.digest()  # 32 bytes
+        h = sha224.digest()  # 28 bytes (SHA-224 produces 28-byte hash)
         checksum = zlib.crc32(h) & 0xFFFFFFFF
         return AccountIdentifier(checksum.to_bytes(CRC_LENGTH_IN_BYTES, "big") + h)
