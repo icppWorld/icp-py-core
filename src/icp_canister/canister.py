@@ -57,7 +57,8 @@ class Canister:
             
             # 2. Extract control parameters from kwargs BEFORE processing them as method arguments
             # verify_certificate is a control parameter for agent.update(), not a method argument
-            verify_certificate = kwargs.pop('verify_certificate', False)
+            # Default to True to match Agent.update() default behavior for security
+            verify_certificate = kwargs.pop('verify_certificate', True)
             
             # 3. Handle kwargs: if kwargs are provided and no args, convert kwargs to a single record argument
             # This allows calling methods like: method(field1=val1, field2=val2) for single-record methods
