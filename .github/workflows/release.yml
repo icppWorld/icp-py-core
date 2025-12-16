@@ -142,14 +142,16 @@ jobs:
           
           if os_name == "macos-latest":
               # For macOS, try aarch64 first (Apple Silicon), then x86_64
+              # Wheel filenames use "macosx" not "apple" or "darwin"
               for wheel in all_wheels:
                   wheel_name = os.path.basename(wheel)
-                  if "aarch64" in wheel_name and "apple" in wheel_name and "darwin" in wheel_name:
-                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
-                          compatible_wheels.insert(0, wheel)  # Prefer aarch64
-                  elif "x86_64" in wheel_name and "apple" in wheel_name and "darwin" in wheel_name:
-                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
-                          compatible_wheels.append(wheel)
+                  if "macosx" in wheel_name.lower():
+                      if "arm64" in wheel_name or "aarch64" in wheel_name:
+                          if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
+                              compatible_wheels.insert(0, wheel)  # Prefer arm64/aarch64
+                      elif "x86_64" in wheel_name:
+                          if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
+                              compatible_wheels.append(wheel)
           elif os_name == "ubuntu-latest":
               # For Linux, only manylinux wheels (exclude Windows and macOS)
               for wheel in all_wheels:
@@ -262,6 +264,7 @@ jobs:
         with:
           packages-dir: dist
           verbose: true
+          skip-existing: true
 
   # Publish main package to PyPI (depends on Rust extension being published)
   publish_main_package:
@@ -282,3 +285,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          skip-existing: true
