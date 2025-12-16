@@ -3,8 +3,6 @@ include CHANGELOG.md
 include ROADMAP.md
 include LICENSE
 
-recursive-include src/icp_candid/parser/assets *.g4 *.jar *.sh
-
 prune tests
 prune examples
 prune pics
