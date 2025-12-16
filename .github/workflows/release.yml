@@ -7,13 +7,16 @@ on:
 
 jobs:
   build_wheels_linux_windows:
-    name: Build wheels on ${{ matrix.os }} (Python ${{ matrix.python }})
+    name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # Cover Linux and Windows platforms with multiple Python versions
-        os: [ubuntu-latest, windows-latest]
-        python: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        # ABI3 wheels only need to be built once per platform
+        include:
+          - os: ubuntu-latest
+            python: '3.10'  # 只需要指定一个版本即可构建 abi3 wheel
+          - os: windows-latest
+            python: '3.10'
     
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +32,8 @@ jobs:
           # Key parameters:
           # --release: Enable compiler optimizations
           # --strip: Remove symbol table to reduce size
-          args: --release --strip --out dist
+          # --find-interpreter: Find Python interpreter automatically
+          args: --release --strip --out dist --find-interpreter
           sccache: 'true'
           # manylinux: auto automatically builds packages compatible with older Linux (CentOS 7/Ubuntu 18.04)
           manylinux: auto 
@@ -38,25 +42,26 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-py${{ matrix.python }}
+          # 修改 artifact 名字，去掉 python 版本号，避免混淆
+          name: wheels-${{ matrix.os }}
           path: src/icp_candid/ic_candid_parser/dist
 
   build_wheels_macos:
-    name: Build wheels on macOS (${{ matrix.target }}, Python ${{ matrix.python }})
+    name: Build wheels on macOS (${{ matrix.target }})
     runs-on: macos-latest
     strategy:
       matrix:
         # Build for both Intel (x86_64) and Apple Silicon (aarch64) architectures
-        # with multiple Python versions for compatibility
+        # ABI3 wheels only need to be built once per architecture
         target: [x86_64-apple-darwin, aarch64-apple-darwin]
-        python: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        # 不需要 python 列表，硬编码一个版本即可
     
     steps:
       - uses: actions/checkout@v4
       
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: '3.10'
           
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -66,14 +71,16 @@ jobs:
           # Key parameters:
           # --release: Enable compiler optimizations
           # --strip: Remove symbol table to reduce size
-          args: --release --strip --out dist
+          # --find-interpreter: Find Python interpreter automatically
+          args: --release --strip --out dist --find-interpreter
           sccache: 'true'
           working-directory: src/icp_candid/ic_candid_parser
           
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-macos-${{ matrix.target }}-py${{ matrix.python }}
+          # Artifact 名字只区分 target
+          name: wheels-macos-${{ matrix.target }}
           path: src/icp_candid/ic_candid_parser/dist
 
   # Build source distribution as fallback (for non-mainstream platforms that can compile from source)
