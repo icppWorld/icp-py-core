@@ -114,6 +114,30 @@ fn convert_method(m: &Binding) -> MethodEntry {
     }
 }
 
+/// Look up a type name in the declarations and extract service methods if found.
+/// This handles the VarT pattern: service : () -> TypeName
+fn lookup_service_type(decs: &[Dec], type_name: &str, init: Option<Vec<JsonType>>) -> Option<ActorEntry> {
+    for dec in decs {
+        if let Dec::TypD(binding) = dec {
+            if binding.id == type_name {
+                match &binding.typ {
+                    IDLType::ServT(methods) => {
+                        let ms = methods.iter().map(convert_method).collect();
+                        return Some(ActorEntry { methods: ms, init });
+                    },
+                    // Handle nested type references (type A = B; type B = service {...})
+                    IDLType::VarT(nested_name) => {
+                        return lookup_service_type(decs, nested_name, init);
+                    },
+                    _ => {}
+                }
+                break;
+            }
+        }
+    }
+    None
+}
+
 // --- 3. Python interface ---
 
 #[pyfunction]
@@ -135,18 +159,31 @@ fn parse_did(did_content: String) -> PyResult<String> {
 
     let mut actor_entry = None;
     if let Some(actor) = &prog.actor {
-        // Process actor definition, could be Service or Class
+        // Process actor definition, could be Service, Class, or VarT (type reference)
         match &actor.typ {
             IDLType::ServT(methods) => {
                 let ms = methods.iter().map(convert_method).collect();
                 actor_entry = Some(ActorEntry { methods: ms, init: None });
             },
             IDLType::ClassT(args, serv) => {
-                let init_args = args.iter().map(convert_type).collect();
-                if let IDLType::ServT(methods) = &**serv {
-                     let ms = methods.iter().map(convert_method).collect();
-                     actor_entry = Some(ActorEntry { methods: ms, init: Some(init_args) });
+                let init_args: Vec<JsonType> = args.iter().map(convert_type).collect();
+                // The service could be inline (ServT) or a type reference (VarT)
+                match &**serv {
+                    IDLType::ServT(methods) => {
+                        let ms = methods.iter().map(convert_method).collect();
+                        actor_entry = Some(ActorEntry { methods: ms, init: Some(init_args) });
+                    },
+                    IDLType::VarT(type_name) => {
+                        // Look up the type reference in the environment
+                        actor_entry = lookup_service_type(&prog.decs, type_name, Some(init_args));
+                    },
+                    _ => {}
                 }
+            },
+            IDLType::VarT(type_name) => {
+                // Handle type reference pattern: service : () -> TypeName
+                // This is common in Motoko-generated DID files
+                actor_entry = lookup_service_type(&prog.decs, type_name, None);
             },
             _ => {}
         }
