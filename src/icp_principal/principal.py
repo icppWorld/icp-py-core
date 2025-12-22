@@ -1,3 +1,9 @@
+# Copyright (c) 2021 Rocklabs
+# Copyright (c) 2024 eliezhao (ICP-PY-CORE maintainer)
+#
+# Licensed under the MIT License
+# See LICENSE file for details
+
 # principal type: https://internetcomputer.org/docs/references/ic-interface-spec/#principal
 
 from __future__ import annotations

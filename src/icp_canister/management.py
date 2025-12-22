@@ -1,3 +1,8 @@
+# Copyright (c) 2021 Rocklabs
+# Copyright (c) 2024 eliezhao (ICP-PY-CORE maintainer)
+#
+# Licensed under the MIT License
+# See LICENSE file for details
 
 # management canister interface `aaaaa-aa`
 # wrap basic interfaces provided by the management canister:

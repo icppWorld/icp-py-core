@@ -14,7 +14,7 @@
     - **References:**
         - [Reducing end-to-end latencies on the Internet Computer](https://forum.dfinity.org/t/reducing-end-to-end-latencies-on-the-internet-computer/34383)
         - [Boundary Node Roadmap (latest v3 endpoints)](https://forum.dfinity.org/t/boundary-node-roadmap/15562/104?u=c-b-elite)
-    - **Solution:** Updated ic-py’s default endpoints to the latest BN v3 addresses and established maintenance tracking for future roadmap changes
+    - **Solution:** Updated ic-py's default endpoints to the latest BN v3 addresses and established maintenance tracking for future roadmap changes
 
 - **Timeouts & error classification**
     - **Issues:** Missing timeouts on agent calls; lack of fine-grained error categories for canister responses (e.g. exhausted cycles, missing WASM)
@@ -34,12 +34,14 @@
         - GitHub issue [#109](https://github.com/rocklabs-io/ic-py/issues/109)
         - PR [#56](https://github.com/rocklabs-io/ic-py/pull/56/files) • issue [#76](https://github.com/rocklabs-io/ic-py/issues/76)
     - **Solution:**
-        1. Mirrored agent-rs’s certificate-checking logic ([agent-rs implementation](https://github.com/dfinity/agent-rs/blob/b53d770cfd07df07b1024cfd9cc25f7ff80d1b76/ic-agent/src/agent/mod.rs#L903))
+        1. Mirrored agent-rs's certificate-checking logic ([agent-rs implementation](https://github.com/dfinity/agent-rs/blob/b53d770cfd07df07b1024cfd9cc25f7ff80d1b76/ic-agent/src/agent/mod.rs#L903))
         2. Resolved Python–BLS compatibility by bridging Rust BLS crate via FFI
+        3. ✅ Certificate verification enabled by default in `update_raw` and `update_raw_async` methods
+        4. ✅ Certificate verification implemented in `poll` and `poll_async` methods
 
 ---
 
-## Milestone 3
+## Milestone 3 ✅ *Completed*
 
 - **Candid type-system enhancements**
     - **Issue:** Missing support for the latest Candid features (e.g. composite queries, new primitives)
@@ -47,29 +49,57 @@
         - [#111](https://github.com/rocklabs-io/ic-py/issues/111) • [PR #112](https://github.com/rocklabs-io/ic-py/pull/112/files) • [#63](https://github.com/rocklabs-io/ic-py/issues/63)
         - [Latest Candid spec](https://github.com/dfinity/candid)
     - **Solution:**
-        1. Update ic-py’s Candid parser/generator with all missing types per the official spec
-        2. Add a test suite to validate correctness against the canonical Candid reference
+        1. ✅ Migrated from Python ANTLR4 implementation to Rust-based `candid-parser` crate for significant performance improvements (multiple times faster parsing speed)
+        2. ✅ Implemented comprehensive DIDLoader interface with support for recursive type definitions and service interface parsing
+        3. ✅ Added comprehensive test suite (`test_candid_comprehensive.py`, `test_did_loader_comprehensive.py`, `test_parser.py`)
+        4. ✅ Full support for all Candid primitives, composite types (Record, Variant, Vec, Opt), and recursive types
+        5. ✅ Automatic retrieval of Candid file directly from canister (via DIDLoader)
 
 ---
 
-## Milestone 4
+## Milestone 4 (Partially Completed)
 
-- **Dynamic HTTP provider & routing**
+- **Expanded API surface** ✅ *Partially Completed*
+    - ✅ High-level wrappers for ICP Ledger (`ledger.py`)
+    - ✅ Complete NNS Governance interface implementation (`governance.py` - 1510 lines)
+    - ✅ Cycles Wallet operations (`cycles_wallet.py`)
+    - ✅ Canister Management interface (`management.py`)
+    - ✅ Comprehensive example code library (ledger, governance, cycles_wallet, management, simple_counter examples)
+    - ⏳ High-level wrappers for ICRC-compliant ledgers (ckBTC, ckETH, ckUSDc, etc.)
+    - ⏳ Out-of-the-box helpers for interacting with Bitcoin, Ethereum, and other canisters
+
+- **Code optimization** ✅ *Completed*
+    - ✅ Simplified `canister.py` from 1322 lines to ~112 lines (90%+ reduction)
+    - ✅ Improved code structure and maintainability
+    - ✅ Better error handling and dynamic method binding support
+
+- **Dynamic HTTP provider & routing** ⏳ *Pending*
     - Implement latency-based, adaptive routing between boundary nodes
     - Support more flexible selection of endpoints at runtime
 
-- **Expanded API surface**
-    - High-level wrappers for ICRC-compliant ledgers (ckBTC, ckETH, ckUSDc, etc.)
-    - Out-of-the-box helpers for interacting with Bitcoin, Ethereum, and other canisters
-
 - **Ongoing alignment & optimization**
-    - Keep pace with agent-rs’s feature roadmap
+    - Keep pace with agent-rs's feature roadmap
     - Targeted performance tuning, stricter type checks
     - Define additional milestones once Milestones 1–3 are complete
+
+---
+
+## Milestone 5 (Next Release)
+
+- **Replica-signed queries**
+    - **Issue:** Query calls currently do not support replica-signed responses for enhanced security
+
+- **Certificate Verification Security Enhancement in Low-level Functions**
+    - **Issue:** The `request_status_raw` and `request_status_raw_async` methods currently return certificates but do not verify them, posing a security risk
+
+- **HTTP Endpoint Update to Latest API**
+    - **Issue:** Query and read_state operations are still using v2 endpoints and need to be updated to the latest API version
+    - **References:**
+        - [Boundary Node Roadmap](https://forum.dfinity.org/t/boundary-node-roadmap/15562/104?u=c-b-elite)
 
 ---
 
 ### Other long-standing bugs
 
 - **Precision of returned data**
-    - Issue [#107](https://github.com/rocklabs-io/ic-py/issues/107) – floating-point vs. integer handling  
+    - Issue [#107](https://github.com/rocklabs-io/ic-py/issues/107) – floating-point vs. integer handling

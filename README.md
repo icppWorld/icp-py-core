@@ -26,6 +26,12 @@ This version introduces a modular architecture, protocol upgrades, and new APIs 
 
 🙏 Special thanks to the original `ic-py` author for their foundational work.
 
+### 🤝 Community & Contribution
+
+- **[Contributing Guidelines](./CONTRIBUTING.md)** - How to contribute to the project
+- **[Code of Conduct](./CODE_OF_CONDUCT.md)** - Community standards and expectations
+- **[Security Policy](./SECURITY.md)** - How to report security vulnerabilities
+
 ---
 
 ## 🔧 Installation
@@ -458,3 +464,14 @@ See [ROADMAP.md](./ROADMAP.md)
 
 Special thanks to the IC community and contributors to the original **ic-py**.  
 **icp-py-core** continues this legacy with modern Python standards and long-term maintenance.
+
+---
+
+## 📚 Additional Resources
+
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Guidelines for contributing to the project
+- **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)** - Community code of conduct
+- **[SECURITY.md](./SECURITY.md)** - Security policy and vulnerability reporting
+- **[MIGRATION.md](./MIGRATION.md)** - Migration guide from ic-py
+- **[CHANGELOG.md](./CHANGELOG.md)** - Release notes and changelog
+- **[ROADMAP.md](./ROADMAP.md)** - Project roadmap and future plans

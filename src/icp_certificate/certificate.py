@@ -1,3 +1,9 @@
+# Copyright (c) 2021 Rocklabs
+# Copyright (c) 2024 eliezhao (ICP-PY-CORE maintainer)
+#
+# Licensed under the MIT License
+# See LICENSE file for details
+
 # reference: https://smartcontracts.org/docs/interface-spec/index.html#certification
 
 from __future__ import annotations
