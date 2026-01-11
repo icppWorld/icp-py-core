@@ -100,13 +100,11 @@ jobs:
           path: src/icp_candid/ic_candid_parser/dist
 
   # Build main package wheels (Python package that depends on Rust extension)
+  # Note: Since the main package is pure Python (py3-none-any), we only need to build once
   build_main_package:
-    name: Build main package on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Build main package wheel
+    runs-on: ubuntu-latest
     needs: [build_wheels_linux_windows, build_wheels_macos, build_sdist]
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       
@@ -133,7 +131,6 @@ jobs:
           import sys
           import platform
           
-          os_name = "${{ matrix.os }}"
           wheels_dir = "rust_wheels"
           
           # Find all wheel files
@@ -146,38 +143,16 @@ jobs:
           
           print(f"Found {len(all_wheels)} wheel files")
           
-          # Filter wheels based on platform
+          # For Linux (ubuntu-latest), use manylinux wheels
           compatible_wheels = []
-          
-          if os_name == "macos-latest":
-              # For macOS, try aarch64 first (Apple Silicon), then x86_64
-              # Wheel filenames use "macosx" not "apple" or "darwin"
-              for wheel in all_wheels:
-                  wheel_name = os.path.basename(wheel)
-                  if "macosx" in wheel_name.lower():
-                      if "arm64" in wheel_name or "aarch64" in wheel_name:
-                          if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
-                              compatible_wheels.insert(0, wheel)  # Prefer arm64/aarch64
-                      elif "x86_64" in wheel_name:
-                          if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
-                              compatible_wheels.append(wheel)
-          elif os_name == "ubuntu-latest":
-              # For Linux, only manylinux wheels (exclude Windows and macOS)
-              for wheel in all_wheels:
-                  wheel_name = os.path.basename(wheel)
-                  if "manylinux" in wheel_name and "win" not in wheel_name and "darwin" not in wheel_name:
-                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
-                          compatible_wheels.append(wheel)
-          elif os_name == "windows-latest":
-              # For Windows, only win_amd64 wheels (exclude Linux and macOS)
-              for wheel in all_wheels:
-                  wheel_name = os.path.basename(wheel)
-                  if "win_amd64" in wheel_name and "darwin" not in wheel_name and "manylinux" not in wheel_name:
-                      if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
-                          compatible_wheels.append(wheel)
+          for wheel in all_wheels:
+              wheel_name = os.path.basename(wheel)
+              if "manylinux" in wheel_name and "win" not in wheel_name and "darwin" not in wheel_name:
+                  if "cp38-abi3" in wheel_name or "cp310" in wheel_name:
+                      compatible_wheels.append(wheel)
           
           if not compatible_wheels:
-              print(f"Error: No compatible wheel found for {os_name}")
+              print(f"Error: No compatible wheel found for Linux")
               print("Available wheels:")
               for wheel in sorted(all_wheels):
                   print(f"  - {os.path.basename(wheel)}")
@@ -208,7 +183,7 @@ jobs:
       - name: Upload main package wheel
         uses: actions/upload-artifact@v4
         with:
-          name: main-package-${{ matrix.os }}
+          name: main-package-wheel
           path: dist/*.whl
 
   # Build main package sdist
@@ -284,14 +259,56 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Download main package artifacts
+        uses: actions/download-artifact@v4
         with:
           pattern: main-package-*
           path: dist
           merge-multiple: true
+      
+      - name: Install twine for validation
+        run: |
+          pip install twine
+      
+      - name: Validate packages before publishing
+        run: |
+          echo "Validating packages in dist directory..."
+          ls -lh dist/
+          echo ""
+          
+          # Check each package file
+          for pkg in dist/*.whl dist/*.tar.gz; do
+            if [ -f "$pkg" ]; then
+              echo "Validating: $(basename $pkg)"
+              if python -m twine check "$pkg"; then
+                echo "✓ $(basename $pkg) is valid"
+              else
+                echo "✗ $(basename $pkg) is invalid or corrupted"
+                echo "Removing invalid file..."
+                rm -f "$pkg"
+              fi
+              echo ""
+            fi
+          done
+          
+          echo "Final packages to publish:"
+          ls -lh dist/
+          
+          # Ensure at least one valid package exists
+          if [ -z "$(ls -A dist/*.whl dist/*.tar.gz 2>/dev/null)" ]; then
+            echo "Error: No valid packages found after validation"
+            exit 1
+          fi
       
       - name: Publish icp-py-core to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           skip-existing: true
+          verify-metadata: true
