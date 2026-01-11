@@ -244,6 +244,61 @@ service : () -> SingleMethodService
         self.assertEqual(len(methods), 1)
         self.assertIn("ping", methods)
 
+    def test_vart_nested_type_reference(self):
+        """
+        Test nested type reference pattern: type A = B; type B = service {...}
+        
+        This tests the recursive lookup functionality in lookup_service_type.
+        Pattern: service : () -> TypeA, where TypeA = TypeB, and TypeB = service {...}
+        """
+        did_code = """
+type InnerService = service {
+    inner_method: () -> (text);
+};
+
+type OuterService = InnerService;
+
+service : () -> OuterService
+"""
+        loader = DIDLoader()
+        result = loader.load_did_source(did_code)
+
+        self.assertIsNotNone(result)
+        methods = result.get("methods", {})
+        self.assertEqual(len(methods), 1,
+            "Expected 1 method but got {}. Nested VarT lookup failed.".format(len(methods)))
+        self.assertIn("inner_method", methods)
+
+    def test_vart_deeply_nested_type_reference(self):
+        """
+        Test deeply nested type reference: type A = B; type B = C; type C = service {...}
+        
+        This ensures the recursive lookup can handle multiple levels of indirection.
+        """
+        did_code = """
+type ServiceImpl = service {
+    do_work: (text) -> (text);
+    get_status: () -> (bool) query;
+};
+
+type ServiceAlias = ServiceImpl;
+type ServiceType = ServiceAlias;
+
+service : () -> ServiceType
+"""
+        loader = DIDLoader()
+        result = loader.load_did_source(did_code)
+
+        self.assertIsNotNone(result)
+        methods = result.get("methods", {})
+        self.assertEqual(len(methods), 2,
+            "Expected 2 methods but got {}. Deeply nested VarT lookup failed.".format(len(methods)))
+        self.assertIn("do_work", methods)
+        self.assertIn("get_status", methods)
+        
+        # Verify query annotation is preserved
+        self.assertIn("query", methods["get_status"].annotations)
+
 
 if __name__ == '__main__':
     unittest.main()

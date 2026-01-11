@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2025-12-20
+
+### Fixed
+
+- **Fixed VarT (type reference) handling in Candid DID parser** 🐛
+  - Fixed issue where DID files using type references for service definitions failed to parse
+  - Added support for `service : () -> TypeName` pattern (common in Motoko-generated DID files)
+  - Added support for nested type references (e.g., `type A = B; type B = service {...}`)
+  - Added support for type references with initialization arguments
+  - Resolves [GitHub issue #7](https://github.com/eliezhao/icp-py-core/issues/7)
+
+### Technical Details
+
+- Enhanced `lookup_service_type` function in Rust parser to handle VarT type references
+- Added recursive lookup for nested type references
+- Added comprehensive test coverage for VarT service reference patterns
+- All 66 tests passing (64 passed, 2 skipped)
+
 ## [2.1.0] - 2025-12-16
 
 ### Performance

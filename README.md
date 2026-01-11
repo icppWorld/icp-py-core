@@ -456,7 +456,7 @@ See [ROADMAP.md](./ROADMAP.md)
 
 ## 🔖 Version
 
-- Current release: **v2.1.0**
+- Current release: **v2.1.1**
 
 ---
 
