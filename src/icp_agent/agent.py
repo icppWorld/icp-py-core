@@ -485,13 +485,28 @@ class Agent:
         self,
         canister_id,
         req_id,
-        verify_certificate, # Deprecated logic, but kept for interface compat
+        verify_certificate,
         *,
         initial_delay: float = DEFAULT_INITIAL_DELAY,
         max_interval: float = DEFAULT_MAX_INTERVAL,
         multiplier: float = DEFAULT_MULTIPLIER,
         timeout: float = DEFAULT_POLL_TIMEOUT_SECS,
     ):
+        """
+        Poll canister call status with exponential backoff (synchronous).
+
+        Args:
+            canister_id: target canister identifier (use effective canister id)
+            req_id:      request ID bytes
+            verify_certificate: whether to verify the certificate
+            initial_delay: initial backoff interval in seconds (default 0.5s)
+            max_interval:  maximum backoff interval in seconds (default 1s)
+            multiplier:    backoff multiplier (default 1.4)
+            timeout:       maximum total polling time in seconds
+
+        Returns:
+            Tuple(status_str, result_bytes_or_data)
+        """
         start_monotonic = time.monotonic()
         backoff = initial_delay
         request_accepted = False
@@ -536,6 +551,10 @@ class Agent:
         multiplier: float = DEFAULT_MULTIPLIER,
         timeout: float = DEFAULT_POLL_TIMEOUT_SECS,
     ):
+        """
+        Poll canister call status with exponential backoff (asynchronous).
+        Mirrors `poll` but uses async read_state.
+        """
         start_monotonic = time.monotonic()
         backoff = initial_delay
         request_accepted = False
