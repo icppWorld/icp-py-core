@@ -388,7 +388,7 @@ class Agent:
 
     # ----------- Read state -----------
 
-    def read_state_raw(self, canister_id, paths):
+    def read_state_raw(self, canister_id, paths, effective_canister_id=None):
         req = {
             "request_type": "read_state",
             "sender": self.identity.sender().bytes,
@@ -396,9 +396,12 @@ class Agent:
             "ingress_expiry": self.get_expiry_date(),
         }
         _, signed_cbor = sign_request(req, self.identity)
-        raw_bytes = self.read_state_endpoint(canister_id, signed_cbor)
+        
+        # Determine effective ID for verification
+        target = effective_canister_id if effective_canister_id else canister_id
 
-        # Some replicas return plain text on error; normalize message
+        raw_bytes = self.read_state_endpoint(target, signed_cbor)
+
         if raw_bytes in (
             b"Invalid path requested.",
             b"Could not parse body as read request: invalid type: byte array, expected a sequence",
@@ -408,12 +411,16 @@ class Agent:
         try:
             decoded_obj = cbor2.loads(raw_bytes)
         except Exception:
-            # Use repr to avoid decode errors
             raise ValueError("Unable to decode cbor value: " + repr(raw_bytes))
+        
         cert_dict = cbor2.loads(decoded_obj["certificate"])
-        return cert_dict
+        certificate = Certificate(cert_dict)
+        certificate.assert_certificate_valid(target)
+        certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
 
-    async def read_state_raw_async(self, canister_id, paths):
+        return certificate
+
+    async def read_state_raw_async(self, canister_id, paths, effective_canister_id=None):
         req = {
             "request_type": "read_state",
             "sender": self.identity.sender().bytes,
@@ -421,7 +428,10 @@ class Agent:
             "ingress_expiry": self.get_expiry_date(),
         }
         _, signed_cbor = sign_request(req, self.identity)
-        raw_bytes = await self.read_state_endpoint_async(canister_id, signed_cbor)
+        
+        target = effective_canister_id if effective_canister_id else canister_id
+        
+        raw_bytes = await self.read_state_endpoint_async(target, signed_cbor)
 
         if raw_bytes in (
             b"Invalid path requested.",
@@ -431,31 +441,31 @@ class Agent:
 
         decoded_obj = cbor2.loads(raw_bytes)
         cert_dict = cbor2.loads(decoded_obj["certificate"])
-        return cert_dict
+        certificate = Certificate(cert_dict)
+        certificate.assert_certificate_valid(target)
+        certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
+        
+        return certificate
 
     # ----------- Request status -----------
 
     def request_status_raw(self, canister_id, req_id):
-        paths = [
-            [b"request_status", req_id],
-        ]
-        cert_dict = self.read_state_raw(canister_id, paths)
-        certificate = Certificate(cert_dict)
+        paths = [[b"request_status", req_id]]
+        certificate = self.read_state_raw(canister_id, paths)
+        
         status_bytes = certificate.lookup_request_status(req_id)
         if status_bytes is None:
-            return status_bytes, cert_dict
-        return status_bytes.decode(), cert_dict
+            return status_bytes, certificate
+        return status_bytes.decode(), certificate
 
     async def request_status_raw_async(self, canister_id, req_id):
-        paths = [
-            [b"request_status", req_id],
-        ]
-        cert_dict = await self.read_state_raw_async(canister_id, paths)
-        certificate = Certificate(cert_dict)
+        paths = [[b"request_status", req_id]]
+        certificate = await self.read_state_raw_async(canister_id, paths)
+        
         status_bytes = certificate.lookup_request_status(req_id)
         if status_bytes is None:
-            return status_bytes, cert_dict
-        return status_bytes.decode(), cert_dict
+            return status_bytes, certificate
+        return status_bytes.decode(), certificate
 
     # ----------- Polling helpers -----------
 
@@ -475,45 +485,23 @@ class Agent:
         self,
         canister_id,
         req_id,
-        verify_certificate,
+        verify_certificate, # Deprecated logic, but kept for interface compat
         *,
         initial_delay: float = DEFAULT_INITIAL_DELAY,
         max_interval: float = DEFAULT_MAX_INTERVAL,
         multiplier: float = DEFAULT_MULTIPLIER,
         timeout: float = DEFAULT_POLL_TIMEOUT_SECS,
     ):
-        """
-        Poll canister call status with exponential backoff (synchronous).
-
-        Args:
-            canister_id: target canister identifier (use effective canister id)
-            req_id:      request ID bytes
-            verify_certificate: whether to verify the certificate
-            initial_delay: initial backoff interval in seconds (default 0.5s)
-            max_interval:  maximum backoff interval in seconds (default 1s)
-            multiplier:    backoff multiplier (default 1.4)
-            timeout:       maximum total polling time in seconds
-
-        Returns:
-            Tuple(status_str, result_bytes_or_data)
-        """
         start_monotonic = time.monotonic()
         backoff = initial_delay
         request_accepted = False
 
         while True:
-            status_str, cert_dict = self.request_status_raw(canister_id, req_id)
-            certificate = Certificate(cert_dict)
-
-            if verify_certificate:
-                certificate.assert_certificate_valid(canister_id)
-                certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
+            status_str, certificate = self.request_status_raw(canister_id, req_id)
 
             if status_str in ("replied", "done", "rejected"):
                 break
 
-            # Once we see Received or Processing, the request is accepted:
-            # reset backoff so we don’t time out while it’s still in flight.
             if status_str in ("received", "processing") and not request_accepted:
                 backoff = initial_delay
                 request_accepted = True
@@ -527,7 +515,7 @@ class Agent:
         if status_str == "replied":
             reply_bytes = certificate.lookup_reply(req_id)
             if reply_bytes is None:
-                raise RuntimeError(f"Certificate lookup failed: reply data not found for request {req_id.hex()}")
+                raise RuntimeError(f"Certificate lookup failed...")
             return status_str, reply_bytes
         elif status_str == "rejected":
             rejection_obj = certificate.lookup_request_rejection(req_id)
@@ -548,21 +536,12 @@ class Agent:
         multiplier: float = DEFAULT_MULTIPLIER,
         timeout: float = DEFAULT_POLL_TIMEOUT_SECS,
     ):
-        """
-        Poll canister call status with exponential backoff (asynchronous).
-        Mirrors `poll` but uses async read_state.
-        """
         start_monotonic = time.monotonic()
         backoff = initial_delay
         request_accepted = False
 
         while True:
-            status_str, cert_dict = await self.request_status_raw_async(canister_id, req_id)
-            certificate = Certificate(cert_dict)
-
-            if verify_certificate:
-                certificate.assert_certificate_valid(canister_id)
-                certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
+            status_str, certificate = await self.request_status_raw_async(canister_id, req_id)
 
             if status_str in ("replied", "done", "rejected"):
                 break
@@ -580,7 +559,7 @@ class Agent:
         if status_str == "replied":
             reply_bytes = certificate.lookup_reply(req_id)
             if reply_bytes is None:
-                raise RuntimeError(f"Certificate lookup failed: reply data not found for request {req_id.hex()}")
+                raise RuntimeError(f"Certificate lookup failed...")
             return status_str, reply_bytes
         elif status_str == "rejected":
             rejection_obj = certificate.lookup_request_rejection(req_id)
