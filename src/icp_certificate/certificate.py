@@ -339,13 +339,14 @@ class Certificate:
         effective_canister_id: Union[bytes, bytearray, memoryview, str],
         *,
         must_verify: bool = True,
+        skip_canister_range_check: bool = False,
     ) -> bytes:
         """
         - No delegation: return the IC root DER public key.
         - With delegation: decode the parent certificate (CBOR),
             * The parent must NOT itself contain a delegation.
             * If must_verify=True: cryptographically verify the parent with blst.
-            * Ensure effective_canister_id is within canister_ranges.
+            * If skip_canister_range_check=False: ensure effective_canister_id is within canister_ranges.
             * Return the subnet DER public_key.
         """
         eff = self._to_bytes(effective_canister_id)
@@ -367,28 +368,36 @@ class Certificate:
             raise ValueError("CertificateHasTooManyDelegations")
 
         if must_verify:
-            verified = parent_cert.verify_cert(eff, backend="blst")
+            verified = parent_cert.verify_cert(eff, backend="blst", skip_canister_range_check=skip_canister_range_check)
             if verified is not True:
                 raise ValueError("ParentCertificateVerificationFailed")
 
-        # canister_ranges
-        canister_range_path = [b"subnet", subnet_id, b"canister_ranges"]
-        canister_range = parent_cert.lookup(canister_range_path)
-        if canister_range is None:
-            raise ValueError("Missing canister_ranges in delegation certificate")
+        # canister_ranges check (skip for subnet read_state)
+        if not skip_canister_range_check:
+            # Try V3 path first: /subnet/<subnet_id>/canister_ranges
+            canister_range_path_v3 = [b"subnet", subnet_id, b"canister_ranges"]
+            canister_range = parent_cert.lookup(canister_range_path_v3)
+            
+            # If not found, try V4 path: /canister_ranges/<subnet_id>
+            if canister_range is None:
+                canister_range_path_v4 = [b"canister_ranges", subnet_id]
+                canister_range = parent_cert.lookup(canister_range_path_v4)
+            
+            if canister_range is None:
+                raise ValueError("Missing canister_ranges in delegation certificate")
 
-        try:
-            ranges_raw = cbor2.loads(canister_range)
-        except Exception as e:
-            raise ValueError("InvalidCborData: canister_ranges") from e
+            try:
+                ranges_raw = cbor2.loads(canister_range)
+            except Exception as e:
+                raise ValueError("InvalidCborData: canister_ranges") from e
 
-        try:
-            ranges: List[Tuple[bytes, bytes]] = [(bytes(lo), bytes(hi)) for (lo, hi) in ranges_raw]
-        except Exception as e:
-            raise ValueError("InvalidCborData: ranges format") from e
+            try:
+                ranges: List[Tuple[bytes, bytes]] = [(bytes(lo), bytes(hi)) for (lo, hi) in ranges_raw]
+            except Exception as e:
+                raise ValueError("InvalidCborData: ranges format") from e
 
-        if not any(lo <= eff <= hi for (lo, hi) in ranges):
-            raise ValueError("CertificateNotAuthorized")
+            if not any(lo <= eff <= hi for (lo, hi) in ranges):
+                raise ValueError("CertificateNotAuthorized")
 
         # subnet public key (DER)
         public_key_path = [b"subnet", subnet_id, b"public_key"]
@@ -398,12 +407,15 @@ class Certificate:
 
         return der_key
 
-    def verify_cert(self, effective_canister_id, *, backend: str = "auto"):
+    def verify_cert(self, effective_canister_id, *, backend: str = "auto", skip_canister_range_check: bool = False):
         """
         Verify the certificate against effective_canister_id.
         backend:
           - "auto" / "blst": verify with blst (raises if blst is unavailable)
           - "return_materials": return verification materials (skip crypto)
+        skip_canister_range_check:
+          - True: skip canister_ranges check (for subnet read_state)
+          - False: verify canister is in subnet's canister_ranges
         """
         if self.signature is None:
             raise ValueError("certificate missing signature")
@@ -415,7 +427,11 @@ class Certificate:
         message = IC_STATE_ROOT_DOMAIN_SEPARATOR + self.root_hash()
 
         must_verify_chain = backend != "return_materials"
-        der_key = self.check_delegation(effective_canister_id, must_verify=must_verify_chain)
+        der_key = self.check_delegation(
+            effective_canister_id, 
+            must_verify=must_verify_chain,
+            skip_canister_range_check=skip_canister_range_check
+        )
         bls_pubkey_96 = extract_der(der_key)
 
         if backend == "return_materials":
@@ -435,15 +451,21 @@ class Certificate:
         raise ValueError(f"Unknown backend: {backend}")
 
     def assert_certificate_valid(
-        self, effective_canister_id: Union[str, bytes, bytearray, memoryview]
+        self, 
+        effective_canister_id: Union[str, bytes, bytearray, memoryview],
+        *,
+        skip_canister_range_check: bool = False
     ) -> None:
         """
         Validate that this Certificate is valid for the effective_canister_id (uses 'blst').
         - On success: return None.
-        - On failure: raise ValueError/BlstUnavailable。
+        - On failure: raise ValueError/BlstUnavailable.
+        skip_canister_range_check:
+          - True: skip canister_ranges check (for subnet read_state)
+          - False: verify canister is in subnet's canister_ranges
         """
         eid_bytes = _to_effective_canister_bytes(effective_canister_id)
-        result = self.verify_cert(eid_bytes, backend="blst")
+        result = self.verify_cert(eid_bytes, backend="blst", skip_canister_range_check=skip_canister_range_check)
         if result is True:
             return
         raise RuntimeError("invalid certificate: BLS verification failed")

@@ -22,9 +22,33 @@ def subnet_public_key(agent: Agent, canister_id: str, subnet_id: str) -> str:
     pubkey = certificate.lookup(path)
     return pubkey.hex()
 
+def subnet_public_key_direct(agent: Agent, subnet_id: str) -> str:
+    """
+    Get subnet public key directly using subnet read_state endpoint.
+    This is more efficient than using canister read_state when you only need subnet data.
+    """
+    path = ["subnet".encode(), Principal.from_str(subnet_id).bytes, "public_key".encode()]
+    certificate = agent.read_state_subnet_raw(subnet_id, [path])
+    pubkey = certificate.lookup(path)
+    return pubkey.hex()
+
 def subnet_canister_ranges(agent: Agent, canister_id: str, subnet_id: str) -> list[list[Principal]]:
     path = ["subnet".encode(), Principal.from_str(subnet_id).bytes, "canister_ranges".encode()]
     certificate = agent.read_state_raw(canister_id, [path])
+    ranges = certificate.lookup(path)
+    return list(
+        map(lambda range_item: 
+            list(map(Principal, range_item)),  
+        cbor2.loads(ranges))
+        )
+
+def subnet_canister_ranges_direct(agent: Agent, subnet_id: str) -> list[list[Principal]]:
+    """
+    Get subnet canister ranges directly using subnet read_state endpoint.
+    This is more efficient than using canister read_state when you only need subnet data.
+    """
+    path = ["subnet".encode(), Principal.from_str(subnet_id).bytes, "canister_ranges".encode()]
+    certificate = agent.read_state_subnet_raw(subnet_id, [path])
     ranges = certificate.lookup(path)
     return list(
         map(lambda range_item: 

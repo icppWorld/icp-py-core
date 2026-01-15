@@ -14,7 +14,7 @@ jobs:
         # ABI3 wheels only need to be built once per platform
         include:
           - os: ubuntu-latest
-            python: '3.10'  # 只需要指定一个版本即可构建 abi3 wheel
+            python: '3.10'  # Only need to specify one version to build abi3 wheel
           - os: windows-latest
             python: '3.10'
     
@@ -42,7 +42,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          # 修改 artifact 名字，去掉 python 版本号，避免混淆
+          # Modify artifact name, remove Python version to avoid confusion
           name: wheels-${{ matrix.os }}
           path: src/icp_candid/ic_candid_parser/dist
 
@@ -54,7 +54,7 @@ jobs:
         # Build for both Intel (x86_64) and Apple Silicon (aarch64) architectures
         # ABI3 wheels only need to be built once per architecture
         target: [x86_64-apple-darwin, aarch64-apple-darwin]
-        # 不需要 python 列表，硬编码一个版本即可
+        # No need for Python list, hardcode one version is sufficient
     
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +79,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          # Artifact 名字只区分 target
+          # Artifact name only distinguishes target
           name: wheels-macos-${{ matrix.target }}
           path: src/icp_candid/ic_candid_parser/dist
 
@@ -121,7 +121,7 @@ jobs:
           merge-multiple: true
       
       - name: Install Rust extension wheel
-        # 强制使用 bash，以便在 Windows 上也能支持 << 'EOF' 语法
+        # Force use of bash to support << 'EOF' syntax on Windows
         shell: bash
         run: |
           python -m pip install --upgrade pip

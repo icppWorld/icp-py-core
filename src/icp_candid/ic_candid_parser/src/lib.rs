@@ -8,7 +8,7 @@ use candid_parser::syntax::Binding;
 use pyo3::prelude::*;
 use candid_parser::{IDLProg};
 use candid_parser::syntax::{Dec, IDLType};
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 
 // --- 1. Define intermediate JSON protocol ---
 // We define a clear JSON structure as the communication protocol between Rust and Python
@@ -125,7 +125,9 @@ fn convert_method(m: &Binding) -> MethodEntry {
 fn lookup_service_type(decs: &[Dec], type_name: &str, init: Option<Vec<JsonType>>) -> Option<ActorEntry> {
     for dec in decs {
         if let Dec::TypD(binding) = dec {
-            if binding.id == type_name {
+            // Convert binding.id to string for comparison (it might be an Id type)
+            let binding_id_str = binding.id.to_string();
+            if binding_id_str == type_name {
                 match &binding.typ {
                     IDLType::ServT(methods) => {
                         let ms = methods.iter().map(convert_method).collect();
@@ -133,7 +135,8 @@ fn lookup_service_type(decs: &[Dec], type_name: &str, init: Option<Vec<JsonType>
                     },
                     // Handle nested type references (type A = B; type B = service {...})
                     IDLType::VarT(nested_name) => {
-                        return lookup_service_type(decs, nested_name, init);
+                        let nested_name_str = nested_name.to_string();
+                        return lookup_service_type(decs, &nested_name_str, init);
                     },
                     _ => {}
                 }
@@ -181,7 +184,9 @@ fn parse_did(did_content: String) -> PyResult<String> {
                     },
                     IDLType::VarT(type_name) => {
                         // Look up the type reference in the environment
-                        actor_entry = lookup_service_type(&prog.decs, type_name, Some(init_args));
+                        // Convert type_name to string (it might be an Id type)
+                        let type_name_str = type_name.to_string();
+                        actor_entry = lookup_service_type(&prog.decs, &type_name_str, Some(init_args));
                     },
                     _ => {}
                 }
@@ -189,7 +194,9 @@ fn parse_did(did_content: String) -> PyResult<String> {
             IDLType::VarT(type_name) => {
                 // Handle type reference pattern: service : () -> TypeName
                 // This is common in Motoko-generated DID files
-                actor_entry = lookup_service_type(&prog.decs, type_name, None);
+                // Convert type_name to string (it might be an Id type)
+                let type_name_str = type_name.to_string();
+                actor_entry = lookup_service_type(&prog.decs, &type_name_str, None);
             },
             _ => {}
         }
