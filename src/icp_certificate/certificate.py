@@ -17,6 +17,11 @@ import cbor2
 
 from icp_principal.principal import Principal
 from icp_candid.candid import LEB128
+from icp_core.errors import (
+    SignatureVerificationFailed,
+    CertificateVerificationError,
+    LookupPathMissing,
+)
 
 
 # ----------------------------- Constants & helpers -----------------------------
@@ -445,7 +450,7 @@ class Certificate:
         if backend in ("auto", "blst"):
             ok = verify_bls_signature_blst(sig_bytes, message, bls_pubkey_96)
             if not ok:
-                raise ValueError("CertificateVerificationFailed")
+                raise SignatureVerificationFailed("BLS signature verification failed")
             return True
 
         raise ValueError(f"Unknown backend: {backend}")
@@ -465,10 +470,16 @@ class Certificate:
           - False: verify canister is in subnet's canister_ranges
         """
         eid_bytes = _to_effective_canister_bytes(effective_canister_id)
-        result = self.verify_cert(eid_bytes, backend="blst", skip_canister_range_check=skip_canister_range_check)
-        if result is True:
-            return
-        raise RuntimeError("invalid certificate: BLS verification failed")
+        try:
+            result = self.verify_cert(eid_bytes, backend="blst", skip_canister_range_check=skip_canister_range_check)
+            if result is True:
+                return
+            raise CertificateVerificationError("BLS verification returned False")
+        except SignatureVerificationFailed as e:
+            raise CertificateVerificationError(f"Signature verification failed: {e}") from e
+        except ValueError as e:
+            # Re-raise as CertificateVerificationError for consistency
+            raise CertificateVerificationError(str(e)) from e
 
     # ---------------- Timestamp verification ----------------
 

@@ -244,6 +244,123 @@ print(f"Incremented: {result[0]['value']}")
 
 ---
 
+## ⚠️ Error Handling
+
+ICP-PY-CORE provides a structured error hierarchy for better error handling and debugging. All errors inherit from `ICError` and are categorized by type.
+
+### Error Classes
+
+```python
+from icp_core import (
+    ICError,                    # Base class for all errors
+    TransportError,             # HTTP/network errors
+    SecurityError,              # Base class for security errors
+    SignatureVerificationFailed,
+    CertificateVerificationError,
+    ReplicaReject,              # Canister rejection
+    PayloadEncodingError,
+    IngressExpiryError,
+)
+```
+
+### Common Error Scenarios
+
+**Transport Errors (Network Issues):**
+```python
+from icp_core import Client, TransportError
+
+client = Client()
+try:
+    data = client.query("canister-id", b"data")
+except TransportError as e:
+    print(f"Failed to connect to {e.url}")
+    print(f"Error: {e.original_error}")
+```
+
+**Replica Rejections (Canister Errors):**
+```python
+from icp_core import Agent, Client, Identity, ReplicaReject
+
+agent = Agent(identity, client)
+try:
+    result = agent.update("canister-id", "method", args)
+except ReplicaReject as e:
+    print(f"Rejected with code {e.reject_code}")
+    print(f"Message: {e.reject_message}")
+    if e.error_code:
+        print(f"Error code: {e.error_code}")
+```
+
+**Security Errors (Certificate Verification):**
+```python
+from icp_core import (
+    CertificateVerificationError,
+    SignatureVerificationFailed,
+)
+
+try:
+    certificate.assert_certificate_valid(canister_id)
+except CertificateVerificationError as e:
+    print(f"Certificate verification failed: {e.reason}")
+except SignatureVerificationFailed:
+    print("BLS signature verification failed")
+```
+
+### Error Hierarchy
+
+```
+ICError (base class)
+├── TransportError (HTTP/network errors)
+├── SecurityError (security errors)
+│   ├── SignatureVerificationFailed
+│   ├── CertificateVerificationError
+│   ├── LookupPathMissing
+│   ├── NodeKeyNotFoundError
+│   └── ReplicaSignatureVerificationFailed
+├── ReplicaReject (canister rejections)
+├── PayloadEncodingError (CBOR encoding errors)
+└── IngressExpiryError (expiry validation errors)
+```
+
+### Best Practices
+
+1. **Catch specific errors** for better error handling:
+   ```python
+   try:
+       result = agent.update("canister-id", "method", args)
+   except ReplicaReject as e:
+       # Handle canister rejection
+       handle_rejection(e)
+   except TransportError as e:
+       # Handle network issues
+       handle_network_error(e)
+   except SecurityError as e:
+       # Handle security issues
+       handle_security_error(e)
+   ```
+
+2. **Check error attributes** for detailed information:
+   ```python
+   except ReplicaReject as e:
+       if e.reject_code == 3:
+           # Canister trapped
+           retry_with_different_args()
+       elif e.reject_code == 4:
+           # Canister did not reply
+           check_canister_status()
+   ```
+
+3. **Preserve error context** when re-raising:
+   ```python
+   try:
+       result = agent.update("canister-id", "method", args)
+   except TransportError as e:
+       logger.error(f"Network error: {e.url}", exc_info=True)
+       raise  # Re-raise to preserve stack trace
+   ```
+
+---
+
 ## 🔑 Installing `blst` (optional)
 
 `blst` is required for certificate verification (enabled by default). If `blst` is not installed, you can disable verification with `verify_certificate=False`.

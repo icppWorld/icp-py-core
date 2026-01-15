@@ -41,6 +41,21 @@ from icp_principal.principal import Principal
 # --- certificate ---
 from icp_certificate.certificate import Certificate
 
+# --- errors ---
+from icp_core.errors import (
+    ICError,
+    TransportError,
+    SecurityError,
+    SignatureVerificationFailed,
+    LookupPathMissing,
+    PayloadEncodingError,
+    ReplicaReject,
+    IngressExpiryError,
+    CertificateVerificationError,
+    NodeKeyNotFoundError,
+    ReplicaSignatureVerificationFailed,
+)
+
 __all__ = [
     "Agent", "Client",
     "Canister", "Ledger", "Governance", "Management", "CyclesWallet",
@@ -48,4 +63,16 @@ __all__ = [
     "encode", "decode", "Types",
     "Principal",
     "Certificate",
+    # Errors
+    "ICError",
+    "TransportError",
+    "SecurityError",
+    "SignatureVerificationFailed",
+    "LookupPathMissing",
+    "PayloadEncodingError",
+    "ReplicaReject",
+    "IngressExpiryError",
+    "CertificateVerificationError",
+    "NodeKeyNotFoundError",
+    "ReplicaSignatureVerificationFailed",
 ]

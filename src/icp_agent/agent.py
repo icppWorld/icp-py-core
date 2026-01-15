@@ -34,6 +34,13 @@ from icp_certificate.certificate import IC_ROOT_KEY, Certificate
 from icp_identity import DelegateIdentity
 from icp_principal import Principal
 from icp_candid.candid import encode, LEB128
+from icp_core.errors import (
+    ReplicaReject,
+    PayloadEncodingError,
+    NodeKeyNotFoundError,
+    ReplicaSignatureVerificationFailed,
+    IngressExpiryError,
+)
 
 IC_REQUEST_DOMAIN_SEPARATOR = b"\x0Aic-request"
 """Domain separator for request signing (0x0A + "ic-request")."""
@@ -354,11 +361,7 @@ class Agent:
         public_key = certificate.lookup(path)
         
         if public_key is None:
-            try:
-                node_id_str = Principal.from_bytes(node_id).to_str()
-            except Exception:
-                node_id_str = node_id.hex()
-            raise RuntimeError(f"Node public key not found for node {node_id_str}")
+            raise NodeKeyNotFoundError(node_id, subnet_id)
         
         # Cache the key
         self.node_key_cache.set(subnet_id, node_id, public_key)
@@ -384,11 +387,7 @@ class Agent:
         public_key = certificate.lookup(path)
         
         if public_key is None:
-            try:
-                node_id_str = Principal.from_bytes(node_id).to_str()
-            except Exception:
-                node_id_str = node_id.hex()
-            raise RuntimeError(f"Node public key not found for node {node_id_str}")
+            raise NodeKeyNotFoundError(node_id, subnet_id)
         
         # Cache the key
         self.node_key_cache.set(subnet_id, node_id, public_key)
@@ -698,7 +697,10 @@ class Agent:
                 return decode(reply_arg, return_type)
             return reply_arg
         elif status == "rejected":
-            raise RuntimeError("Canister rejected the call: " + (_safe_str(result.get("reject_message")) or ""))
+            reject_code = result.get("reject_code", 0)
+            reject_message = _safe_str(result.get("reject_message")) or "Unknown rejection"
+            error_code = _safe_str(result.get("error_code"))
+            raise ReplicaReject(reject_code, reject_message, error_code)
         else:
             raise RuntimeError("Unknown status: " + repr(status))
 
@@ -788,17 +790,36 @@ class Agent:
                             continue
                     
                     if not verified:
-                        raise RuntimeError(
-                            f"Replica signature verification failed for all signatures. "
-                            f"Canister: {target_canister}, Request ID: {request_id.hex()}, "
-                            f"Signatures count: {len(signatures)}"
-                        )
+                        # Use the first signature's node_id for error reporting
+                        first_node_id = None
+                        for sig_obj in signatures:
+                            if isinstance(sig_obj, dict) and sig_obj.get("identity"):
+                                node_id = sig_obj.get("identity")
+                                if isinstance(node_id, str):
+                                    node_id = Principal.from_str(node_id).bytes
+                                elif not isinstance(node_id, bytes):
+                                    node_id = bytes(node_id)
+                                first_node_id = node_id
+                                break
+                        if first_node_id:
+                            raise ReplicaSignatureVerificationFailed(
+                                first_node_id, subnet_id, request_id,
+                                f"Replica signature verification failed for all {len(signatures)} signatures"
+                            )
+                        else:
+                            raise ReplicaSignatureVerificationFailed(
+                                b"", subnet_id, request_id,
+                                f"Replica signature verification failed: no valid signatures found"
+                            )
             
             if reply_arg[:4] == b"DIDL":
                 return decode(reply_arg, return_type)
             return reply_arg
         elif status == "rejected":
-            raise RuntimeError("Canister rejected the call: " + (_safe_str(result.get("reject_message")) or ""))
+            reject_code = result.get("reject_code", 0)
+            reject_message = _safe_str(result.get("reject_message")) or "Unknown rejection"
+            error_code = _safe_str(result.get("error_code"))
+            raise ReplicaReject(reject_code, reject_message, error_code)
         else:
             raise RuntimeError("Unknown status: " + repr(status))
 
@@ -849,11 +870,14 @@ class Agent:
                 return decode(reply_data, return_type)
             elif certified_status == "rejected":
                 rejection = certificate.lookup_request_rejection(request_id)
-                raise RuntimeError(
-                    f"Call rejected (code={_safe_str(rejection['reject_code'])}): "
-                    f"{_safe_str(rejection['reject_message'])} "
-                    f"[error_code={_safe_str(rejection.get('error_code'))}]"
-                )
+                reject_code = rejection.get('reject_code')
+                if isinstance(reject_code, bytes):
+                    reject_code = int.from_bytes(reject_code, 'big')
+                elif not isinstance(reject_code, int):
+                    reject_code = 0
+                reject_message = _safe_str(rejection.get('reject_message')) or "Unknown rejection"
+                error_code = _safe_str(rejection.get('error_code'))
+                raise ReplicaReject(reject_code, reject_message, error_code)
             else:
                 # Not yet terminal in certification; continue polling
                 return self.poll_and_wait(effective_id, request_id, verify_certificate, return_type=return_type)
@@ -863,10 +887,14 @@ class Agent:
             return self.poll_and_wait(effective_id, request_id, verify_certificate, return_type=return_type)
 
         elif status == "non_replicated_rejection":
-            code = _safe_str(response_obj.get("reject_code"))
-            message = _safe_str(response_obj.get("reject_message"))
-            error = _safe_str(response_obj.get("error_code")) or "unknown"
-            raise RuntimeError(f"Call rejected (code={code}): {message} [error_code={error}]")
+            code = response_obj.get("reject_code", 0)
+            if isinstance(code, bytes):
+                code = int.from_bytes(code, 'big')
+            elif not isinstance(code, int):
+                code = 0
+            message = _safe_str(response_obj.get("reject_message")) or "Unknown rejection"
+            error = _safe_str(response_obj.get("error_code"))
+            raise ReplicaReject(code, message, error)
 
         else:
             raise RuntimeError(f"Unknown status: {status}")
@@ -894,10 +922,14 @@ class Agent:
 
         if status == "rejected":
             # result is a dict with rejection fields
-            code = result.get("reject_code")
-            message = result.get("reject_message")
-            error = result.get("error_code", "unknown")
-            raise RuntimeError(f"Rejected (code={code}): {message} [error_code={error}]")
+            code = result.get("reject_code", 0)
+            if isinstance(code, bytes):
+                code = int.from_bytes(code, 'big')
+            elif not isinstance(code, int):
+                code = 0
+            message = _safe_str(result.get("reject_message")) or "Unknown rejection"
+            error = _safe_str(result.get("error_code"))
+            raise ReplicaReject(code, message, error)
 
         elif status == "replied":
             # result is raw reply bytes
@@ -1060,10 +1092,14 @@ class Agent:
         if status == "replied":
             return decode(result, return_type)
         elif status == "rejected":
-            code = result["reject_code"]
-            message = result["reject_message"]
-            error = result.get("error_code", "unknown")
-            raise RuntimeError(f"Call rejected (code={code}): {message} [error_code={error}]")
+            code = result.get("reject_code", 0)
+            if isinstance(code, bytes):
+                code = int.from_bytes(code, 'big')
+            elif not isinstance(code, int):
+                code = 0
+            message = _safe_str(result.get("reject_message")) or "Unknown rejection"
+            error = _safe_str(result.get("error_code"))
+            raise ReplicaReject(code, message, error)
         else:
             raise RuntimeError(f"Unknown status: {status}")
 
