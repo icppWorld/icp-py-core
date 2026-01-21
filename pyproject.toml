@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "icp-py-core"
-version = "2.1.1"
+version = "2.2.0"
 description = "Core Python SDK for the Internet Computer: agent, candid, identity, principal, certificate."
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -17,6 +17,12 @@ import cbor2
 
 from icp_principal.principal import Principal
 from icp_candid.candid import LEB128
+# Import errors locally to avoid circular import
+# from icp_core.errors import (
+#     SignatureVerificationFailed,
+#     CertificateVerificationError,
+#     LookupPathMissing,
+# )
 
 
 # ----------------------------- Constants & helpers -----------------------------
@@ -247,6 +253,95 @@ class Certificate:
         bpath = [self._to_bytes(x) for x in path]
         return self._lookup_path(bpath, self.tree)
 
+    def lookup_tree(self, path: Sequence[Union[str, bytes, bytearray, memoryview]]) -> Optional[Any]:
+        """
+        Resolve a path against the hash tree; return the tree node at that path or None.
+        Unlike lookup(), this returns the node itself rather than extracting bytes from a Leaf.
+        """
+        bpath = [self._to_bytes(x) for x in path]
+        return self._lookup_tree_path(bpath, self.tree)
+
+    def _lookup_tree_path(self, path: Sequence[bytes], node: Any) -> Optional[Any]:
+        """
+        Traverse the tree to find a node at the given path.
+        Returns the node itself (not just Leaf values).
+        """
+        tag = node[0]
+
+        if tag == NodeId.Empty.value:
+            return None
+
+        if tag == NodeId.Pruned.value:
+            return None
+
+        if not path:
+            # Path consumed, return the current node
+            return node
+
+        if tag == NodeId.Fork.value:
+            left = self._lookup_tree_path(path, node[1])
+            if left is not None:
+                return left
+            return self._lookup_tree_path(path, node[2])
+
+        if tag == NodeId.Labeled.value:
+            want = path[0]
+            have = bytes(node[1])
+            if want == have:
+                return self._lookup_tree_path(path[1:], node[2])
+            return None
+
+        if tag == NodeId.Leaf.value:
+            # path not empty but hit a leaf => not found
+            return None
+
+        raise RuntimeError("unreachable")
+
+    def list_paths(self, node: Optional[Any] = None, prefix: List[bytes] = None) -> List[List[bytes]]:
+        """
+        List all paths in the hash tree starting from the given node.
+        Returns a list of paths, where each path is a list of bytes (labels).
+        
+        Args:
+            node: The tree node to start from (defaults to self.tree)
+            prefix: Current path prefix (used recursively)
+        
+        Returns:
+            List of paths, each path is a list of byte labels
+        """
+        if node is None:
+            node = self.tree
+        if prefix is None:
+            prefix = []
+        
+        tag = node[0]
+        paths = []
+
+        if tag == NodeId.Empty.value:
+            return paths
+
+        if tag == NodeId.Pruned.value:
+            return paths
+
+        if tag == NodeId.Leaf.value:
+            # Leaf node: return the current path
+            return [prefix] if prefix else [[]]
+
+        if tag == NodeId.Labeled.value:
+            label = bytes(node[1])
+            subtree = node[2]
+            new_prefix = prefix + [label]
+            return self.list_paths(subtree, new_prefix)
+
+        if tag == NodeId.Fork.value:
+            left = node[1]
+            right = node[2]
+            paths.extend(self.list_paths(left, prefix))
+            paths.extend(self.list_paths(right, prefix))
+            return paths
+
+        raise RuntimeError("unreachable")
+
     def _lookup_path(self, path: Sequence[bytes], node: Any) -> Optional[bytes]:
         """
         Spec-compliant traversal without flattening forks:
@@ -339,13 +434,14 @@ class Certificate:
         effective_canister_id: Union[bytes, bytearray, memoryview, str],
         *,
         must_verify: bool = True,
+        skip_canister_range_check: bool = False,
     ) -> bytes:
         """
         - No delegation: return the IC root DER public key.
         - With delegation: decode the parent certificate (CBOR),
             * The parent must NOT itself contain a delegation.
             * If must_verify=True: cryptographically verify the parent with blst.
-            * Ensure effective_canister_id is within canister_ranges.
+            * If skip_canister_range_check=False: ensure effective_canister_id is within canister_ranges.
             * Return the subnet DER public_key.
         """
         eff = self._to_bytes(effective_canister_id)
@@ -367,28 +463,64 @@ class Certificate:
             raise ValueError("CertificateHasTooManyDelegations")
 
         if must_verify:
-            verified = parent_cert.verify_cert(eff, backend="blst")
+            verified = parent_cert.verify_cert(eff, backend="blst", skip_canister_range_check=skip_canister_range_check)
             if verified is not True:
                 raise ValueError("ParentCertificateVerificationFailed")
 
-        # canister_ranges
-        canister_range_path = [b"subnet", subnet_id, b"canister_ranges"]
-        canister_range = parent_cert.lookup(canister_range_path)
-        if canister_range is None:
-            raise ValueError("Missing canister_ranges in delegation certificate")
+        # canister_ranges check (skip for subnet read_state)
+        # v4 API uses sharded structure: [canister_ranges, subnet_id, shard_label]
+        if not skip_canister_range_check:
+            canister_range_shards_lookup = [b"canister_ranges", subnet_id]
+            canister_range_shards = parent_cert.lookup_tree(canister_range_shards_lookup)
+            
+            if canister_range_shards is None:
+                raise ValueError("Missing canister_ranges in delegation certificate")
+            
+            shard_paths = parent_cert.list_paths(canister_range_shards)
+            
+            if not shard_paths:
+                raise ValueError("CertificateNotAuthorized")
+            
+            shard_labels = []
+            for path in shard_paths:
+                if path:
+                    shard_labels.append(path[-1])
+            
+            if not shard_labels:
+                raise ValueError("CertificateNotAuthorized")
+            
+            shard_labels.sort()
+            
+            shard_division = 0
+            for i, shard_label in enumerate(shard_labels):
+                if shard_label <= eff:
+                    shard_division = i + 1
+                else:
+                    break
+            
+            if shard_division == 0:
+                raise ValueError("CertificateNotAuthorized")
+            
+            max_potential_shard = shard_labels[shard_division - 1]
+            
+            canister_range_lookup = [max_potential_shard]
+            canister_range = parent_cert._lookup_path(canister_range_lookup, canister_range_shards)
+            
+            if canister_range is None:
+                raise ValueError("Missing canister_ranges shard data in delegation certificate")
 
-        try:
-            ranges_raw = cbor2.loads(canister_range)
-        except Exception as e:
-            raise ValueError("InvalidCborData: canister_ranges") from e
+            try:
+                ranges_raw = cbor2.loads(canister_range)
+            except Exception as e:
+                raise ValueError("InvalidCborData: canister_ranges") from e
 
-        try:
-            ranges: List[Tuple[bytes, bytes]] = [(bytes(lo), bytes(hi)) for (lo, hi) in ranges_raw]
-        except Exception as e:
-            raise ValueError("InvalidCborData: ranges format") from e
+            try:
+                ranges: List[Tuple[bytes, bytes]] = [(bytes(lo), bytes(hi)) for (lo, hi) in ranges_raw]
+            except Exception as e:
+                raise ValueError("InvalidCborData: ranges format") from e
 
-        if not any(lo <= eff <= hi for (lo, hi) in ranges):
-            raise ValueError("CertificateNotAuthorized")
+            if not any(lo <= eff <= hi for (lo, hi) in ranges):
+                raise ValueError("CertificateNotAuthorized")
 
         # subnet public key (DER)
         public_key_path = [b"subnet", subnet_id, b"public_key"]
@@ -398,12 +530,15 @@ class Certificate:
 
         return der_key
 
-    def verify_cert(self, effective_canister_id, *, backend: str = "auto"):
+    def verify_cert(self, effective_canister_id, *, backend: str = "auto", skip_canister_range_check: bool = False):
         """
         Verify the certificate against effective_canister_id.
         backend:
           - "auto" / "blst": verify with blst (raises if blst is unavailable)
           - "return_materials": return verification materials (skip crypto)
+        skip_canister_range_check:
+          - True: skip canister_ranges check (for subnet read_state)
+          - False: verify canister is in subnet's canister_ranges
         """
         if self.signature is None:
             raise ValueError("certificate missing signature")
@@ -415,7 +550,11 @@ class Certificate:
         message = IC_STATE_ROOT_DOMAIN_SEPARATOR + self.root_hash()
 
         must_verify_chain = backend != "return_materials"
-        der_key = self.check_delegation(effective_canister_id, must_verify=must_verify_chain)
+        der_key = self.check_delegation(
+            effective_canister_id, 
+            must_verify=must_verify_chain,
+            skip_canister_range_check=skip_canister_range_check
+        )
         bls_pubkey_96 = extract_der(der_key)
 
         if backend == "return_materials":
@@ -429,24 +568,49 @@ class Certificate:
         if backend in ("auto", "blst"):
             ok = verify_bls_signature_blst(sig_bytes, message, bls_pubkey_96)
             if not ok:
-                raise ValueError("CertificateVerificationFailed")
+                # Import here to avoid circular import
+                from icp_core.errors import SignatureVerificationFailed
+                raise SignatureVerificationFailed("BLS signature verification failed")
             return True
 
         raise ValueError(f"Unknown backend: {backend}")
 
     def assert_certificate_valid(
-        self, effective_canister_id: Union[str, bytes, bytearray, memoryview]
+        self, 
+        effective_canister_id: Union[str, bytes, bytearray, memoryview],
+        *,
+        skip_canister_range_check: bool = False
     ) -> None:
         """
         Validate that this Certificate is valid for the effective_canister_id (uses 'blst').
         - On success: return None.
-        - On failure: raise ValueError/BlstUnavailable。
+        - On failure: raise ValueError/BlstUnavailable.
+        skip_canister_range_check:
+          - True: skip canister_ranges check (for subnet read_state)
+          - False: verify canister is in subnet's canister_ranges
         """
         eid_bytes = _to_effective_canister_bytes(effective_canister_id)
-        result = self.verify_cert(eid_bytes, backend="blst")
-        if result is True:
-            return
-        raise RuntimeError("invalid certificate: BLS verification failed")
+        try:
+            result = self.verify_cert(
+                eid_bytes, 
+                backend="blst", 
+                skip_canister_range_check=skip_canister_range_check
+            )
+            if result is True:
+                return
+            # Import here to avoid circular import
+            from icp_core.errors import CertificateVerificationError
+            raise CertificateVerificationError("BLS verification returned False")
+        except Exception as e:
+            # Import here to avoid circular import
+            from icp_core.errors import CertificateVerificationError, SignatureVerificationFailed
+            if isinstance(e, SignatureVerificationFailed):
+                raise CertificateVerificationError(f"Signature verification failed: {e}") from e
+            elif isinstance(e, ValueError):
+                # Re-raise as CertificateVerificationError for consistency
+                raise CertificateVerificationError(str(e)) from e
+            else:
+                raise
 
     # ---------------- Timestamp verification ----------------
 

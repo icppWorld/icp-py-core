@@ -1,5 +1,6 @@
 __pycache__
 *.swp
+*.pyc
 .vscode
 .lh
 
@@ -15,5 +16,8 @@ dist/
 .venv/
 .venv-test/
 
-# Release checklist (local notes)
+# Third-party libraries
+blst/
+
+# Release checklist
 RELEASE_CHECKLIST.md
