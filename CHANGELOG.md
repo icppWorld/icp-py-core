@@ -2,6 +2,86 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-01-21
+
+### Added
+
+- **Structured Error Handling Hierarchy** 🎯
+  - New comprehensive error hierarchy with 11 error classes
+  - `ICError` - Base class for all agent errors
+  - `TransportError` - HTTP/network errors with URL and original error context
+  - `SecurityError` and subclasses:
+    - `SignatureVerificationFailed` - BLS signature verification failures
+    - `CertificateVerificationError` - Certificate validation errors
+    - `LookupPathMissing` - Certificate path lookup failures
+    - `NodeKeyNotFoundError` - Node public key lookup failures
+    - `ReplicaSignatureVerificationFailed` - Replica signature verification failures
+  - `ReplicaReject` - Canister rejection errors with detailed codes and messages
+  - `PayloadEncodingError` - CBOR encoding/decoding errors
+  - `IngressExpiryError` - Ingress message expiry validation errors
+  - All errors exported from `icp_core` for easy importing
+  - Comprehensive error handling documentation in README.md
+
+- **HTTP/2 Support** ⚡
+  - Enabled HTTP/2 in all async methods (`AsyncClient`)
+  - Improved performance through HTTP/2 multiplexing and header compression
+  - Automatic fallback to HTTP/1.1 if HTTP/2 is not supported
+  - Better connection reuse and reduced latency for concurrent requests
+
+- **V4 API Sharded Canister Ranges Support** 🔐
+  - Added support for v4 API sharded `canister_ranges` structure
+  - Updated certificate verification to handle sharded structure: `[canister_ranges, subnet_id, shard_label]`
+  - Improved `lookup_tree` and `list_paths` methods for shard navigation
+  - Updated test certificates to use v4 API format
+
+- **Enhanced Certificate Verification** 🔒
+  - Improved certificate delegation path handling
+  - Better error messages for certificate verification failures
+  - Enhanced subnet-level read_state operations
+  - Node key caching for performance optimization
+
+### Changed
+
+- **Error Handling Improvements** 🛠️
+  - All `Client` methods now raise `TransportError` for network issues
+  - All `Agent` methods raise structured errors (`ReplicaReject`, `SecurityError`, etc.)
+  - Certificate verification raises `SecurityError` subclasses
+  - Better error chaining with `__cause__` attribute preservation
+  - Improved error messages with sanitized stack traces
+
+- **API Endpoint Updates** 🌐
+  - Restored `check_delegation` logic for proper delegation verification
+  - Updated to use v3 endpoint for call operations (`/api/v3/canister/.../call`)
+  - Maintained backward compatibility with existing code
+
+- **Code Quality Improvements** ✨
+  - Fixed circular import issues in `icp_core.__init__.py` using `__getattr__` lazy loading
+  - Improved error chain setup for `TransportError` and `PayloadEncodingError`
+  - Enhanced type annotations throughout codebase
+  - Better code organization and maintainability
+
+### Fixed
+
+- **Circular Import Issues** 🐛
+  - Fixed circular imports in `icp_core.__init__.py` using lazy loading pattern
+  - Improved import structure to prevent import-time circular dependencies
+  - Fixed mock import paths in tests
+
+- **Error Chain Setup** 🔗
+  - Fixed `__cause__` attribute setting for `TransportError` and `PayloadEncodingError`
+  - Proper exception chaining for better debugging and error context
+
+- **Subnet ID Extraction** 🔍
+  - Improved subnet_id extraction from delegation with proper None checking
+  - Better error handling when delegation is missing or invalid
+
+### Migration Notes
+
+- **Error Handling**: If you catch generic `Exception`, consider catching specific error types (`TransportError`, `ReplicaReject`, `SecurityError`) for better error handling
+- **HTTP/2**: No code changes required - HTTP/2 is automatically enabled for async methods
+- **Certificate Verification**: Query signature verification is temporarily disabled in v2.2.0
+- **Imports**: Error classes are now available from `icp_core`: `from icp_core import TransportError, ReplicaReject, SecurityError`
+
 ## [2.1.1] - 2025-12-20
 
 ### Fixed
