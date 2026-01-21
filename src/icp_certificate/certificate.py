@@ -468,6 +468,7 @@ class Certificate:
                 raise ValueError("ParentCertificateVerificationFailed")
 
         # canister_ranges check (skip for subnet read_state)
+        # v4 API uses sharded structure: [canister_ranges, subnet_id, shard_label]
         if not skip_canister_range_check:
             canister_range_shards_lookup = [b"canister_ranges", subnet_id]
             canister_range_shards = parent_cert.lookup_tree(canister_range_shards_lookup)
