@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-01-22
+
+### Fixed
+
+- **VarT service reference fix included** 🐛
+  - Updated dependency to `ic_candid_parser>=0.1.1` to include VarT (type reference) fix
+  - This release includes the fix for `service : () -> TypeName` pattern that was committed (commit 83d6dca) but not published in the original v2.2.0 release
+  - The Rust extension `ic-candid-parser` is now published as v0.1.1 with the VarT fix
+  - Resolves [GitHub issue #10](https://github.com/eliezhao/icp-py-core/issues/10)
+
 ## [2.2.0] - 2026-01-21
 
 ### Added
