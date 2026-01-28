@@ -458,9 +458,10 @@ class Agent:
         root_key: Root public key for certificate verification (default: IC_ROOT_KEY).
         nonce_factory: Optional factory for generating nonces.
         verify_replica_signatures: Whether to verify replica-signed query signatures (default: False).
-        verify_query_signatures: Whether to verify query response signatures (default: True).
-                                 Query signatures improve resilience but require a separate read_state
-                                 call to fetch node keys.
+        verify_query_signatures: Whether to verify query response signatures (default: False).
+                                 Note: Standard IC query responses do not include signatures. Only
+                                 replica-signed queries include signatures. Enabling this will cause
+                                 standard queries to fail unless signatures are present.
         node_key_cache: Cache for node public keys.
     
     Example:
@@ -479,7 +480,7 @@ class Agent:
         ingress_expiry: float = DEFAULT_INGRESS_EXPIRY_SEC,
         root_key: bytes = IC_ROOT_KEY,
         verify_replica_signatures: bool = False,
-        verify_query_signatures: bool = True
+        verify_query_signatures: bool = False
     ) -> None:
         """
         Initialize the Agent.
@@ -492,9 +493,10 @@ class Agent:
             root_key: Root public key for certificate verification. Defaults to IC_ROOT_KEY.
             verify_replica_signatures: Whether to verify replica-signed query signatures.
                                      Defaults to False.
-            verify_query_signatures: Whether to verify query response signatures. Defaults to True.
-                                    Query signatures improve resilience but require a separate read_state
-                                    call to fetch node keys.
+            verify_query_signatures: Whether to verify query response signatures. Defaults to False.
+                                    Note: Standard IC query responses do not include signatures.
+                                    Only replica-signed queries include signatures. Enabling this
+                                    will cause standard queries to fail unless signatures are present.
         """
         self.identity = identity
         self.client = client
@@ -706,8 +708,9 @@ class Agent:
             # Check timestamp
             now_ns = time.time_ns()
             max_age_ns = int(self.ingress_expiry * NANOSECONDS)
-            if now_ns - timestamp_ns > max_age_ns:
-                continue  # Skip outdated signature, try next one
+            # Use absolute value to check both past and future timestamps
+            if abs(now_ns - timestamp_ns) > max_age_ns:
+                continue  # Skip outdated or future signature, try next one
             
             # Build signable data
             status = result.get("status", "")
@@ -822,8 +825,9 @@ class Agent:
             # Check timestamp
             now_ns = time.time_ns()
             max_age_ns = int(self.ingress_expiry * NANOSECONDS)
-            if now_ns - timestamp_ns > max_age_ns:
-                continue  # Skip outdated signature, try next one
+            # Use absolute value to check both past and future timestamps
+            if abs(now_ns - timestamp_ns) > max_age_ns:
+                continue  # Skip outdated or future signature, try next one
             
             # Build signable data
             status = result.get("status", "")
@@ -988,7 +992,8 @@ class Agent:
                 (e.g. [{'type': Types.Nat, 'value': 42}])
           - If `return_type` is provided and reply is DIDL, it will be decoded.
           - `verify_query_signatures`: Whether to verify query response signatures.
-                                     If None, uses Agent-level configuration (default: True).
+                                     If None, uses Agent-level configuration (default: False).
+                                     Note: Standard IC query responses do not include signatures.
           - `timeout`: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC.
         """
         didl = self._encode_arg(arg)
@@ -1019,7 +1024,8 @@ class Agent:
         
         Args:
             verify_query_signatures: Whether to verify query response signatures.
-                                   If None, uses Agent-level configuration (default: True).
+                                   If None, uses Agent-level configuration (default: False).
+                                   Note: Standard IC query responses do not include signatures.
         """
         didl = self._encode_arg(arg)
         return await self.query_raw_async(
@@ -1048,11 +1054,15 @@ class Agent:
     ):
         """
         High-level update: encode arg to DIDL and delegate to update_raw().
-        Polling/backoff options are handled inside update_raw()/poll().
+        Polling/backoff options are passed to update_raw() and then to poll().
         """
         didl = self._encode_arg(arg)
         # Use default timeout if not provided
         poll_timeout = timeout if timeout is not None else DEFAULT_POLL_TIMEOUT_SECS
+        # Use default backoff parameters if not provided
+        backoff_initial_delay = initial_delay if initial_delay is not None else DEFAULT_INITIAL_DELAY
+        backoff_max_interval = max_interval if max_interval is not None else DEFAULT_MAX_INTERVAL
+        backoff_multiplier = multiplier if multiplier is not None else DEFAULT_MULTIPLIER
         return self.update_raw(
             canister_id,
             method_name,
@@ -1061,6 +1071,9 @@ class Agent:
             effective_canister_id=effective_canister_id,
             verify_certificate=verify_certificate,
             timeout=poll_timeout,
+            initial_delay=backoff_initial_delay,
+            max_interval=backoff_max_interval,
+            multiplier=backoff_multiplier,
         )
 
     async def update_async(
@@ -1124,7 +1137,8 @@ class Agent:
             effective_canister_id: Optional effective canister ID.
             timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC (30 seconds).
             verify_query_signatures: Whether to verify query response signatures.
-                                   If None, uses Agent-level configuration (default: True).
+                                   If None, uses Agent-level configuration (default: False).
+                                   Note: Standard IC query responses do not include signatures.
         
         Returns:
             Decoded result if return_type is provided, otherwise raw bytes.
@@ -1195,7 +1209,8 @@ class Agent:
             effective_canister_id: Optional effective canister ID.
             timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC (30 seconds).
             verify_query_signatures: Whether to verify query response signatures.
-                                   If None, uses Agent-level configuration (default: True).
+                                   If None, uses Agent-level configuration (default: False).
+                                   Note: Standard IC query responses do not include signatures.
         
         Returns:
             Decoded result if return_type is provided, otherwise raw bytes.
@@ -1256,6 +1271,10 @@ class Agent:
         effective_canister_id=None,
         verify_certificate: bool = True,
         timeout: Optional[float] = None,
+        *,
+        initial_delay: float = DEFAULT_INITIAL_DELAY,
+        max_interval: float = DEFAULT_MAX_INTERVAL,
+        multiplier: float = DEFAULT_MULTIPLIER,
     ):
         """
         Send update call and poll for result with timeout handling.
@@ -1268,6 +1287,9 @@ class Agent:
             effective_canister_id: Optional effective canister ID.
             verify_certificate: Whether to verify certificate.
             timeout: Timeout in seconds for polling. If None, uses DEFAULT_POLL_TIMEOUT_SECS.
+            initial_delay: Initial backoff interval in seconds (default 0.5s).
+            max_interval: Maximum backoff interval in seconds (default 1s).
+            multiplier: Backoff multiplier (default 1.4).
         
         Returns:
             Decoded result if return_type is provided, otherwise raw bytes.
@@ -1340,6 +1362,9 @@ class Agent:
                     verify_certificate,
                     return_type=return_type,
                     timeout=poll_timeout,
+                    initial_delay=initial_delay,
+                    max_interval=max_interval,
+                    multiplier=multiplier,
                 )
 
         elif status == "accepted":
@@ -1350,6 +1375,9 @@ class Agent:
                 verify_certificate,
                 return_type=return_type,
                 timeout=poll_timeout,
+                initial_delay=initial_delay,
+                max_interval=max_interval,
+                multiplier=multiplier,
             )
 
         elif status == "non_replicated_rejection":
@@ -1616,6 +1644,10 @@ class Agent:
         verify_certificate,
         return_type=None,
         timeout: Optional[float] = None,
+        *,
+        initial_delay: float = DEFAULT_INITIAL_DELAY,
+        max_interval: float = DEFAULT_MAX_INTERVAL,
+        multiplier: float = DEFAULT_MULTIPLIER,
     ):
         """
         Poll for update call result and decode if return_type is provided.
@@ -1626,6 +1658,9 @@ class Agent:
             verify_certificate: Whether to verify certificate.
             return_type: Optional return type for decoding.
             timeout: Timeout in seconds. If None, uses DEFAULT_POLL_TIMEOUT_SECS.
+            initial_delay: Initial backoff interval in seconds (default 0.5s).
+            max_interval: Maximum backoff interval in seconds (default 1s).
+            multiplier: Backoff multiplier (default 1.4).
         
         Returns:
             Decoded result if return_type is provided, otherwise raw bytes.
@@ -1636,7 +1671,13 @@ class Agent:
         """
         # Use default timeout if not provided
         poll_timeout = timeout if timeout is not None else DEFAULT_POLL_TIMEOUT_SECS
-        status, result = self.poll(canister_id, req_id, verify_certificate, timeout=poll_timeout)
+        status, result = self.poll(
+            canister_id, req_id, verify_certificate,
+            timeout=poll_timeout,
+            initial_delay=initial_delay,
+            max_interval=max_interval,
+            multiplier=multiplier,
+        )
         if status == "replied":
             return decode(result, return_type)
         elif status == "rejected":

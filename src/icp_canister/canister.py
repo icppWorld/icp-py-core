@@ -5,9 +5,20 @@
 # See LICENSE file for details
 
 from icp_candid.did_loader import DIDLoader
+from icp_principal import Principal
 
 class Canister:
-    def __init__(self, agent, canister_id, candid_str=None):
+    def __init__(self, agent, canister_id, candid_str=None, auto_fetch_candid=True):
+        """
+        Initialize a Canister instance.
+        
+        Args:
+            agent: Agent instance for interacting with IC
+            canister_id: Canister ID (can be a string or Principal object)
+            candid_str: Optional Candid interface definition string. If provided, local definition will be used first.
+            auto_fetch_candid: If True and candid_str is None, automatically fetch Candid interface from IC.
+                               If False, auto-fetch is disabled and candid_str must be provided manually.
+        """
         self.agent = agent
         self.canister_id = canister_id
         self.candid_str = candid_str
@@ -15,8 +26,99 @@ class Canister:
         self.actor = None
         self.init_args = []  # Store init arguments (for Canister deployment)
         
+        # If local candid_str is provided, use local definition first
         if candid_str:
             self._parse_did_with_retry(candid_str)
+        elif auto_fetch_candid:
+            # If no local candid_str provided, try to automatically fetch from IC
+            fetched_candid = self._fetch_candid_from_ic()
+            if fetched_candid:
+                self.candid_str = fetched_candid
+                self._parse_did_with_retry(fetched_candid)
+            else:
+                raise ValueError(
+                    f"Failed to fetch Candid interface definition from canister {canister_id}. "
+                    "Please ensure the canister is deployed and contains public candid:service metadata, "
+                    "or manually provide the candid_str parameter."
+                )
+    
+    def _fetch_candid_from_ic(self):
+        """
+        Fetch Candid interface definition from Internet Computer for the canister.
+        
+        First tries to fetch public metadata (candid:service), then falls back to private metadata (candid) if failed.
+        Returns None if both attempts fail.
+        
+        Returns:
+            Candid interface definition string, or None if fetch fails.
+        """
+        # Ensure canister_id is a Principal object
+        if isinstance(self.canister_id, str):
+            canister_principal = Principal.from_str(self.canister_id)
+        elif isinstance(self.canister_id, Principal):
+            canister_principal = self.canister_id
+        else:
+            # Try to convert to Principal
+            try:
+                canister_principal = Principal(self.canister_id)
+            except Exception:
+                raise ValueError(f"Invalid canister_id: {self.canister_id}")
+        
+        canister_id_bytes = canister_principal.bytes
+        
+        # Convert Principal to string for read_state_raw (it expects string or Principal, but certificate validation needs string)
+        canister_id_str = canister_principal.to_str() if hasattr(canister_principal, 'to_str') else str(self.canister_id)
+        if isinstance(self.canister_id, str):
+            canister_id_str = self.canister_id
+        
+        # First try to fetch public metadata (candid:service)
+        # Anyone can read this, no authentication required
+        public_path = [
+            b"canister",
+            canister_id_bytes,
+            b"metadata",
+            b"candid:service"
+        ]
+        
+        try:
+            certificate = self.agent.read_state_raw(
+                canister_id_str,
+                [public_path],
+                verify_certificate=False  # Disable verification for Candid fetch (read-only operation)
+            )
+            candid_bytes = certificate.lookup(public_path)
+            if candid_bytes:
+                candid_str = candid_bytes.decode('utf-8')
+                return candid_str
+        except Exception:
+            # Public metadata doesn't exist or read failed, continue to try private metadata
+            pass
+        
+        # If public metadata doesn't exist, try to fetch private metadata (candid)
+        # This requires controller identity and may fail
+        private_path = [
+            b"canister",
+            canister_id_bytes,
+            b"metadata",
+            b"candid"
+        ]
+        
+        try:
+            certificate = self.agent.read_state_raw(
+                canister_id_str,
+                [private_path],
+                verify_certificate=False  # Disable verification for Candid fetch (read-only operation)
+            )
+            candid_bytes = certificate.lookup(private_path)
+            if candid_bytes:
+                candid_str = candid_bytes.decode('utf-8')
+                return candid_str
+        except Exception:
+            # Private metadata also doesn't exist or insufficient permissions
+            pass
+        
+        # Both attempts failed
+        return None
 
     def _parse_did_with_retry(self, did_content):
         """
