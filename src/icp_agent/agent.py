@@ -42,6 +42,15 @@ from icp_core.errors import (
     ReplicaSignatureVerificationFailed,
     IngressExpiryError,
     TimeoutWaitingForResponse,
+    QuerySignatureVerificationFailed,
+    MissingSignature,
+    TooManySignatures,
+    CertificateOutdated,
+    CertificateNotAuthorized,
+    DerKeyLengthMismatch,
+    DerPrefixMismatch,
+    MalformedPublicKey,
+    MalformedSignature,
 )
 
 IC_REQUEST_DOMAIN_SEPARATOR = b"\x0Aic-request"
@@ -49,6 +58,11 @@ IC_REQUEST_DOMAIN_SEPARATOR = b"\x0Aic-request"
 
 IC_RESPONSE_DOMAIN_SEPARATOR = b"\x0Bic-response"
 """Domain separator for response verification (0x0B + "ic-response")."""
+
+# DER prefix for Ed25519 node public keys (12 bytes)
+# [48, 42, 48, 5, 6, 3, 43, 101, 112, 3, 33, 0]
+ED25519_DER_PREFIX = bytes([48, 42, 48, 5, 6, 3, 43, 101, 112, 3, 33, 0])
+"""DER prefix for Ed25519 node public keys (RFC 8410)."""
 
 DEFAULT_POLL_TIMEOUT_SECS = 60.0
 """Default timeout for polling update call results in seconds."""
@@ -142,9 +156,12 @@ def to_request_id(d: dict) -> bytes:
     Computer protocol to generate request IDs. It ensures that requests with
     the same content always produce the same hash, regardless of key ordering.
     
+    This function recursively handles nested dictionaries and lists according to
+    the Representation Independent Hash algorithm.
+    
     Args:
         d: A dictionary representing the request. Keys and values are hashed
-           according to the RIH algorithm.
+           according to the RIH algorithm. Supports nested dictionaries and lists.
     
     Returns:
         A 32-byte SHA-256 hash of the request.
@@ -154,26 +171,181 @@ def to_request_id(d: dict) -> bytes:
     
     Note:
         This implements the Representation Independent Hash algorithm as specified
-        in the IC protocol specification.
+        in the IC protocol specification. It matches Rust's to_request_id implementation.
     """
     if not isinstance(d, dict):
         raise TypeError("request must be a dict")
 
     vec = []
     for k, v in d.items():
-        if isinstance(v, list):
-            v = encode_list(v)
-        if isinstance(v, int):
-            v = LEB128.encode_u(v)
+        # Hash the key
         if not isinstance(k, bytes):
             k = k.encode()
-        if not isinstance(v, bytes):
-            v = v.encode()
         h_k = hashlib.sha256(k).digest()
-        h_v = hashlib.sha256(v).digest()
+        
+        # Hash the value (recursively handle nested structures)
+        if isinstance(v, dict):
+            # Recursively hash nested dictionaries
+            h_v = to_request_id(v)
+        elif isinstance(v, list):
+            # Use encode_list for lists
+            h_v = hashlib.sha256(encode_list(v)).digest()
+        elif isinstance(v, int):
+            # Encode integers as LEB128
+            h_v = hashlib.sha256(LEB128.encode_u(v)).digest()
+        elif isinstance(v, (bytes, bytearray, memoryview)):
+            # Hash bytes directly
+            h_v = hashlib.sha256(bytes(v)).digest()
+        elif isinstance(v, str):
+            # Hash strings as UTF-8 bytes
+            h_v = hashlib.sha256(v.encode("utf-8")).digest()
+        else:
+            # Fallback: use CBOR encoding for other types
+            h_v = hashlib.sha256(cbor2.dumps(v)).digest()
+        
         vec.append(h_k + h_v)
+    
+    # Sort all key-value hash pairs and compute final hash
     s = b''.join(sorted(vec))
     return hashlib.sha256(s).digest()
+
+
+def build_query_response_signable(
+    status: str,
+    request_id: bytes,
+    timestamp: int,
+    reply: Optional[Dict[str, Any]] = None,
+    reject: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """
+    Build the signable form of a query response.
+    
+    According to ICP spec, the signable data is:
+    signable = b"\\x0Bic-response" + RequestId(QueryResponseSignable)
+    
+    QueryResponseSignable contains:
+    - status (replied/rejected)
+    - reply or reject information
+    - request_id
+    - timestamp
+    
+    The QueryResponseSignable is CBOR-serialized, then hashed to get RequestId.
+    
+    Args:
+        status: Response status ("replied" or "rejected").
+        request_id: The request ID bytes.
+        timestamp: Timestamp in nanoseconds.
+        reply: Reply data dict (for "replied" status).
+        reject: Reject data dict (for "rejected" status).
+    
+    Returns:
+        Signable bytes ready for signature verification.
+    """
+    if status == "replied":
+        if reply is None:
+            raise ValueError("reply is required for 'replied' status")
+        reply_arg = reply.get("arg", reply.get(b"arg"))
+        if reply_arg is None:
+            raise ValueError("reply.arg is required")
+        
+        # Build QueryResponseSignable::Replied
+        # Ensure request_id is bytes
+        request_id_bytes = bytes(request_id) if not isinstance(request_id, bytes) else request_id
+        signable_dict = {
+            "status": "replied",
+            "reply": {"arg": reply_arg},
+            "request_id": request_id_bytes,
+            "timestamp": timestamp,
+        }
+    elif status == "rejected":
+        if reject is None:
+            raise ValueError("reject is required for 'rejected' status")
+        
+        reject_code = reject.get("reject_code", reject.get(b"reject_code", 0))
+        reject_message = reject.get("reject_message", reject.get(b"reject_message", ""))
+        error_code = reject.get("error_code", reject.get(b"error_code"))
+        
+        # Build QueryResponseSignable::Rejected
+        # Ensure request_id is bytes
+        request_id_bytes = bytes(request_id) if not isinstance(request_id, bytes) else request_id
+        signable_dict = {
+            "status": "rejected",
+            "reject_code": reject_code,
+            "reject_message": reject_message,
+            "request_id": request_id_bytes,
+            "timestamp": timestamp,
+        }
+        if error_code is not None:
+            signable_dict["error_code"] = error_code
+    else:
+        raise ValueError(f"Invalid status: {status}")
+    
+    # Compute RequestId using Representation Independent Hash
+    # According to ICP spec and Rust implementation, to_request_id uses
+    # a custom serde serializer that recursively hashes nested structures.
+    # Our Python implementation matches this behavior.
+    signable_request_id = to_request_id(signable_dict)
+    
+    # Build final signable: domain separator + request_id
+    signable = IC_RESPONSE_DOMAIN_SEPARATOR + signable_request_id
+    return signable
+
+
+def verify_ed25519_signature(signature: bytes, message: bytes, public_key: bytes) -> bool:
+    """
+    Verify an Ed25519 signature.
+    
+    Args:
+        signature: 64-byte Ed25519 signature.
+        message: Message bytes that were signed.
+        public_key: 32-byte Ed25519 public key.
+    
+    Returns:
+        True if signature is valid, False otherwise.
+    """
+    if len(signature) != 64:
+        return False
+    if len(public_key) != 32:
+        return False
+    
+    try:
+        from ecdsa import VerifyingKey
+        from ecdsa.curves import Ed25519
+        
+        vk = VerifyingKey.from_string(public_key, curve=Ed25519)
+        vk.verify(signature, message)
+        return True
+    except Exception:
+        return False
+
+
+def extract_ed25519_pubkey_from_der(der_key: bytes) -> bytes:
+    """
+    Extract Ed25519 public key from DER-encoded node public key.
+    
+    Node public keys are DER-encoded BLS keys (44 bytes):
+    - 12-byte DER prefix: [48, 42, 48, 5, 6, 3, 43, 101, 112, 3, 33, 0]
+    - 32-byte Ed25519 public key
+    
+    Args:
+        der_key: DER-encoded public key (44 bytes).
+    
+    Returns:
+        32-byte Ed25519 public key.
+    
+    Raises:
+        DerKeyLengthMismatch: If key length is not 44 bytes.
+        DerPrefixMismatch: If DER prefix doesn't match.
+        MalformedPublicKey: If key format is invalid.
+    """
+    if len(der_key) != 44:
+        raise DerKeyLengthMismatch(expected=44, actual=len(der_key))
+    
+    if der_key[:12] != ED25519_DER_PREFIX:
+        raise DerPrefixMismatch(expected=ED25519_DER_PREFIX, actual=der_key[:12])
+    
+    # Extract the 32-byte Ed25519 public key (last 32 bytes)
+    return der_key[12:]
 
 
 def encode_list(l: list) -> bytes:
@@ -286,8 +458,9 @@ class Agent:
         root_key: Root public key for certificate verification (default: IC_ROOT_KEY).
         nonce_factory: Optional factory for generating nonces.
         verify_replica_signatures: Whether to verify replica-signed query signatures (default: False).
-                                     Note: This feature is disabled by default in v2.2.0 and will be
-                                     enabled in a future release once certificate delegation issues are resolved.
+        verify_query_signatures: Whether to verify query response signatures (default: True).
+                                 Query signatures improve resilience but require a separate read_state
+                                 call to fetch node keys.
         node_key_cache: Cache for node public keys.
     
     Example:
@@ -305,7 +478,8 @@ class Agent:
         nonce_factory: Optional[Any] = None,
         ingress_expiry: float = DEFAULT_INGRESS_EXPIRY_SEC,
         root_key: bytes = IC_ROOT_KEY,
-        verify_replica_signatures: bool = False  # Disabled by default in v2.2.0
+        verify_replica_signatures: bool = False,
+        verify_query_signatures: bool = True
     ) -> None:
         """
         Initialize the Agent.
@@ -317,8 +491,10 @@ class Agent:
             ingress_expiry: Ingress message expiry time in seconds. Defaults to 3 minutes.
             root_key: Root public key for certificate verification. Defaults to IC_ROOT_KEY.
             verify_replica_signatures: Whether to verify replica-signed query signatures.
-                                     Defaults to False in v2.2.0. This feature is temporarily disabled
-                                     due to certificate delegation issues and will be enabled in a future release.
+                                     Defaults to False.
+            verify_query_signatures: Whether to verify query response signatures. Defaults to True.
+                                    Query signatures improve resilience but require a separate read_state
+                                    call to fetch node keys.
         """
         self.identity = identity
         self.client = client
@@ -326,6 +502,7 @@ class Agent:
         self.root_key = root_key
         self.nonce_factory = nonce_factory
         self.verify_replica_signatures = verify_replica_signatures
+        self.verify_query_signatures = verify_query_signatures
         self.node_key_cache = NodeKeyCache()
 
     def get_principal(self) -> Principal:
@@ -365,7 +542,9 @@ class Agent:
             raise ValueError(f"Invalid subnet_id format: {subnet_id.hex()}") from e
         
         path = [b"subnet", subnet_id, b"node", node_id, b"public_key"]
-        certificate = self.read_state_subnet_raw(subnet_id_str, [path])
+        # Skip BLS verification when fetching node keys for query signature verification
+        # The node key itself will be verified during signature verification
+        certificate = self.read_state_subnet_raw(subnet_id_str, [path], verify_certificate=False)
         public_key = certificate.lookup(path)
         
         if public_key is None:
@@ -391,7 +570,9 @@ class Agent:
             raise ValueError(f"Invalid subnet_id format: {subnet_id.hex()}") from e
         
         path = [b"subnet", subnet_id, b"node", node_id, b"public_key"]
-        certificate = await self.read_state_subnet_raw_async(subnet_id_str, [path])
+        # Skip BLS verification when fetching node keys for query signature verification
+        # The node key itself will be verified during signature verification
+        certificate = await self.read_state_subnet_raw_async(subnet_id_str, [path], verify_certificate=False)
         public_key = certificate.lookup(path)
         
         if public_key is None:
@@ -401,118 +582,291 @@ class Agent:
         self.node_key_cache.set(subnet_id, node_id, public_key)
         return public_key
 
-    # NOTE: Replica signature verification methods are disabled in v2.2.0
-    # These methods are commented out and will be enabled in a future release
-    # once certificate delegation issues are resolved.
-    # 
-    # def _verify_replica_signature(
-    #     self, 
-    #     request_id: bytes, 
-    #     timestamp_ns: int, 
-    #     reply_data: bytes,
-    #     signature: bytes,
-    #     node_identity: bytes,
-    #     subnet_id: bytes
-    # ) -> bool:
-    #     """
-    #     Verify replica-signed query signature.
-    #     
-    #     Args:
-    #         request_id: The request ID bytes
-    #         timestamp_ns: Timestamp in nanoseconds
-    #         reply_data: The reply data bytes
-    #         signature: BLS signature (48 bytes)
-    #         node_identity: Node Principal ID
-    #         subnet_id: Subnet Principal ID
-    #         
-    #     Returns:
-    #         True if signature is valid, False otherwise
-    #     """
-    #     # Step 0: Verify timestamp to prevent replay attacks
-    #     # According to ICP spec, timestamp should be within a small window (typically 5 minutes)
-    #     now_ns = time.time_ns()
-    #     max_age_ns = 5 * 60 * NANOSECONDS  # 5 minutes in nanoseconds
-    #     if abs(now_ns - timestamp_ns) > max_age_ns:
-    #         return False  # Timestamp is outside valid window
-    #     
-    #     # Step 1: Construct domain-separated message
-    #     # Message = H("ic-response") || H(RequestId) || H(Timestamp) || H(ReplyData)
-    #     # Using Representation Independent Hash for the map
-    #     message_map = {
-    #         b"request_id": request_id,
-    #         b"timestamp": timestamp_ns.to_bytes(8, "big"),
-    #         b"reply": reply_data,
-    #     }
-    #     message_hash = to_request_id(message_map)
-    #     message = IC_RESPONSE_DOMAIN_SEPARATOR + message_hash
-    #
-    #     # Step 2: Get node public key (from cache or state tree)
-    #     node_pubkey = self._get_node_public_key(subnet_id, node_identity)
-    #     
-    #     # Extract 96-byte BLS public key from DER if needed
-    #     from icp_certificate.certificate import extract_der
-    #     try:
-    #         bls_pubkey_96 = extract_der(node_pubkey)
-    #     except (ValueError, TypeError):
-    #         # If not DER format, assume it's already 96 bytes
-    #         if len(node_pubkey) == 96:
-    #             bls_pubkey_96 = node_pubkey
-    #         else:
-    #             raise ValueError(f"Invalid node public key format: expected 96 bytes or DER, got {len(node_pubkey)} bytes")
-    #
-    #     # Step 3: Verify BLS signature
-    #     from icp_certificate.certificate import verify_bls_signature_blst
-    #     return verify_bls_signature_blst(signature, message, bls_pubkey_96)
+    def _get_subnet_by_canister(self, canister_id: Union[str, Principal]) -> Tuple[bytes, Dict[bytes, bytes]]:
+        """
+        Get subnet ID for a canister.
+        
+        Returns:
+            Tuple of (subnet_id, empty_dict). Node keys are fetched on-demand during signature verification.
+        """
+        # Read canister state to get certificate with delegation
+        paths = [[b"time"]]  # Minimal path to get certificate
+        cert = self.read_state_raw(canister_id, paths, verify_certificate=False)
+        
+        # Determine subnet_id from delegation
+        subnet_id = None
+        if cert.delegation is not None:
+            subnet_id_raw = cert.delegation.get("subnet_id") or cert.delegation.get(b"subnet_id")
+            if subnet_id_raw is not None:
+                subnet_id = bytes(subnet_id_raw)
+        
+        if subnet_id is None:
+            # If no delegation, this might be NNS canister (root subnet)
+            # For root subnet, subnet_id is derived from root key
+            subnet_id = Principal.self_authenticating(self.root_key).bytes
+        
+        # Return subnet_id and empty dict (node keys fetched on-demand)
+        return subnet_id, {}
 
-    # NOTE: Replica signature verification methods are disabled in v2.2.0
-    # These methods are commented out and will be enabled in a future release
-    # once certificate delegation issues are resolved.
-    # 
-    # async def _verify_replica_signature_async(
-    #     self, 
-    #     request_id: bytes, 
-    #     timestamp_ns: int, 
-    #     reply_data: bytes,
-    #     signature: bytes,
-    #     node_identity: bytes,
-    #     subnet_id: bytes
-    # ) -> bool:
-    #     """
-    #     Verify replica-signed query signature (async).
-    #     """
-    #     # Step 0: Verify timestamp to prevent replay attacks
-    #     # According to ICP spec, timestamp should be within a small window (typically 5 minutes)
-    #     now_ns = time.time_ns()
-    #     max_age_ns = 5 * 60 * NANOSECONDS  # 5 minutes in nanoseconds
-    #     if abs(now_ns - timestamp_ns) > max_age_ns:
-    #         return False  # Timestamp is outside valid window
-    #     
-    #     # Step 1: Construct domain-separated message
-    #     message_map = {
-    #         b"request_id": request_id,
-    #         b"timestamp": timestamp_ns.to_bytes(8, "big"),
-    #         b"reply": reply_data,
-    #     }
-    #     message_hash = to_request_id(message_map)
-    #     message = IC_RESPONSE_DOMAIN_SEPARATOR + message_hash
-    #
-    #     # Step 2: Get node public key (from cache or state tree)
-    #     node_pubkey = await self._get_node_public_key_async(subnet_id, node_identity)
-    #     
-    #     # Extract 96-byte BLS public key from DER if needed
-    #     from icp_certificate.certificate import extract_der
-    #     try:
-    #         bls_pubkey_96 = extract_der(node_pubkey)
-    #     except (ValueError, TypeError):
-    #         # If not DER format, assume it's already 96 bytes
-    #         if len(node_pubkey) == 96:
-    #             bls_pubkey_96 = node_pubkey
-    #         else:
-    #             raise ValueError(f"Invalid node public key format: expected 96 bytes or DER, got {len(node_pubkey)} bytes")
-    #
-    #     # Step 3: Verify BLS signature
-    #     from icp_certificate.certificate import verify_bls_signature_blst
-    #     return verify_bls_signature_blst(signature, message, bls_pubkey_96)
+    async def _get_subnet_by_canister_async(self, canister_id: Union[str, Principal]) -> Tuple[bytes, Dict[bytes, bytes]]:
+        """
+        Get subnet ID for a canister (async).
+        
+        Returns:
+            Tuple of (subnet_id, empty_dict). Node keys are fetched on-demand during signature verification.
+        """
+        # Read canister state to get certificate with delegation
+        paths = [[b"time"]]  # Minimal path to get certificate
+        cert = await self.read_state_raw_async(canister_id, paths, verify_certificate=False)
+        
+        # Determine subnet_id from delegation
+        subnet_id = None
+        if cert.delegation is not None:
+            subnet_id_raw = cert.delegation.get("subnet_id") or cert.delegation.get(b"subnet_id")
+            if subnet_id_raw is not None:
+                subnet_id = bytes(subnet_id_raw)
+        
+        if subnet_id is None:
+            # If no delegation, this might be NNS canister (root subnet)
+            # For root subnet, subnet_id is derived from root key
+            subnet_id = Principal.self_authenticating(self.root_key).bytes
+        
+        # Return subnet_id and empty dict (node keys fetched on-demand)
+        return subnet_id, {}
+
+    def _verify_query_response_signatures(
+        self,
+        result: Dict[str, Any],
+        request_id: bytes,
+        effective_canister_id: Union[str, Principal],
+    ) -> None:
+        """
+        Verify query response signatures.
+        
+        Args:
+            result: Query response dict from endpoint.
+            request_id: The request ID bytes.
+            effective_canister_id: Effective canister ID for subnet lookup.
+        
+        Raises:
+            MissingSignature: If response has no signatures.
+            TooManySignatures: If signature count exceeds node count.
+            CertificateOutdated: If signature timestamp is outdated.
+            CertificateNotAuthorized: If node is not authorized.
+            QuerySignatureVerificationFailed: If signature verification fails.
+        """
+        signatures = result.get("signatures", [])
+        if not isinstance(signatures, list) or len(signatures) == 0:
+            raise MissingSignature()
+        
+        # Get subnet information
+        subnet_id, node_keys = self._get_subnet_by_canister(effective_canister_id)
+        
+        # Check signature count
+        # Note: We don't know the exact node count without fetching all nodes,
+        # so we'll verify each signature individually and allow any valid signature
+        if len(signatures) > 100:  # Reasonable upper limit
+            raise TooManySignatures(had=len(signatures), needed=100)
+        
+        # Verify each signature
+        verified = False
+        for sig_obj in signatures:
+            if not isinstance(sig_obj, dict):
+                continue
+            
+            node_identity_raw = sig_obj.get("identity")
+            sig_bytes_raw = sig_obj.get("signature")
+            timestamp_ns_raw = sig_obj.get("timestamp")
+            
+            if not all([node_identity_raw, sig_bytes_raw, timestamp_ns_raw]):
+                continue
+            
+            # Convert to bytes if needed
+            if isinstance(node_identity_raw, str):
+                node_identity = Principal.from_str(node_identity_raw).bytes
+            elif isinstance(node_identity_raw, (bytes, bytearray, memoryview)):
+                node_identity = bytes(node_identity_raw)
+            else:
+                continue
+            
+            if isinstance(sig_bytes_raw, str):
+                sig_bytes = bytes.fromhex(sig_bytes_raw)
+            elif isinstance(sig_bytes_raw, (bytes, bytearray, memoryview)):
+                sig_bytes = bytes(sig_bytes_raw)
+            else:
+                continue
+            
+            if isinstance(timestamp_ns_raw, str):
+                timestamp_ns = int(timestamp_ns_raw)
+            elif isinstance(timestamp_ns_raw, int):
+                timestamp_ns = timestamp_ns_raw
+            else:
+                continue
+            
+            # Check timestamp
+            now_ns = time.time_ns()
+            max_age_ns = int(self.ingress_expiry * NANOSECONDS)
+            if now_ns - timestamp_ns > max_age_ns:
+                continue  # Skip outdated signature, try next one
+            
+            # Build signable data
+            status = result.get("status", "")
+            try:
+                signable = build_query_response_signable(
+                    status=status,
+                    request_id=request_id,
+                    timestamp=timestamp_ns,
+                    reply=result.get("reply"),
+                    reject=result.get("reject") if status == "rejected" else None,
+                )
+            except Exception:
+                continue  # Skip if we can't build signable
+            
+            # Get node public key
+            try:
+                node_pubkey_der = self._get_node_public_key(subnet_id, node_identity)
+            except NodeKeyNotFoundError:
+                # Node not found, try next signature
+                continue
+            
+            # Extract Ed25519 public key from DER
+            try:
+                ed25519_pubkey = extract_ed25519_pubkey_from_der(node_pubkey_der)
+            except (DerKeyLengthMismatch, DerPrefixMismatch, MalformedPublicKey):
+                continue
+            
+            # Verify signature
+            try:
+                if verify_ed25519_signature(sig_bytes, signable, ed25519_pubkey):
+                    verified = True
+                    break
+            except Exception as e:
+                # Log but continue trying other signatures
+                continue
+        
+        if not verified:
+            # Provide more detailed error message
+            sig_count = len(signatures)
+            raise QuerySignatureVerificationFailed(
+                f"Query signature verification failed for all {sig_count} signature(s). "
+                "This may indicate: invalid signatures, outdated timestamps, or node key lookup failures."
+            )
+
+    async def _verify_query_response_signatures_async(
+        self,
+        result: Dict[str, Any],
+        request_id: bytes,
+        effective_canister_id: Union[str, Principal],
+    ) -> None:
+        """
+        Verify query response signatures (async).
+        
+        Args:
+            result: Query response dict from endpoint.
+            request_id: The request ID bytes.
+            effective_canister_id: Effective canister ID for subnet lookup.
+        
+        Raises:
+            MissingSignature: If response has no signatures.
+            TooManySignatures: If signature count exceeds node count.
+            CertificateOutdated: If signature timestamp is outdated.
+            CertificateNotAuthorized: If node is not authorized.
+            QuerySignatureVerificationFailed: If signature verification fails.
+        """
+        signatures = result.get("signatures", [])
+        if not isinstance(signatures, list) or len(signatures) == 0:
+            raise MissingSignature()
+        
+        # Get subnet information
+        subnet_id, node_keys = await self._get_subnet_by_canister_async(effective_canister_id)
+        
+        # Check signature count
+        if len(signatures) > 100:  # Reasonable upper limit
+            raise TooManySignatures(had=len(signatures), needed=100)
+        
+        # Verify each signature
+        verified = False
+        for sig_obj in signatures:
+            if not isinstance(sig_obj, dict):
+                continue
+            
+            node_identity_raw = sig_obj.get("identity")
+            sig_bytes_raw = sig_obj.get("signature")
+            timestamp_ns_raw = sig_obj.get("timestamp")
+            
+            if not all([node_identity_raw, sig_bytes_raw, timestamp_ns_raw]):
+                continue
+            
+            # Convert to bytes if needed
+            if isinstance(node_identity_raw, str):
+                node_identity = Principal.from_str(node_identity_raw).bytes
+            elif isinstance(node_identity_raw, (bytes, bytearray, memoryview)):
+                node_identity = bytes(node_identity_raw)
+            else:
+                continue
+            
+            if isinstance(sig_bytes_raw, str):
+                sig_bytes = bytes.fromhex(sig_bytes_raw)
+            elif isinstance(sig_bytes_raw, (bytes, bytearray, memoryview)):
+                sig_bytes = bytes(sig_bytes_raw)
+            else:
+                continue
+            
+            if isinstance(timestamp_ns_raw, str):
+                timestamp_ns = int(timestamp_ns_raw)
+            elif isinstance(timestamp_ns_raw, int):
+                timestamp_ns = timestamp_ns_raw
+            else:
+                continue
+            
+            # Check timestamp
+            now_ns = time.time_ns()
+            max_age_ns = int(self.ingress_expiry * NANOSECONDS)
+            if now_ns - timestamp_ns > max_age_ns:
+                continue  # Skip outdated signature, try next one
+            
+            # Build signable data
+            status = result.get("status", "")
+            try:
+                signable = build_query_response_signable(
+                    status=status,
+                    request_id=request_id,
+                    timestamp=timestamp_ns,
+                    reply=result.get("reply"),
+                    reject=result.get("reject") if status == "rejected" else None,
+                )
+            except Exception:
+                continue  # Skip if we can't build signable
+            
+            # Get node public key
+            try:
+                node_pubkey_der = await self._get_node_public_key_async(subnet_id, node_identity)
+            except NodeKeyNotFoundError:
+                # Node not found, try next signature
+                continue
+            
+            # Extract Ed25519 public key from DER
+            try:
+                ed25519_pubkey = extract_ed25519_pubkey_from_der(node_pubkey_der)
+            except (DerKeyLengthMismatch, DerPrefixMismatch, MalformedPublicKey):
+                continue
+            
+            # Verify signature
+            try:
+                if verify_ed25519_signature(sig_bytes, signable, ed25519_pubkey):
+                    verified = True
+                    break
+            except Exception as e:
+                # Log but continue trying other signatures
+                continue
+        
+        if not verified:
+            # Provide more detailed error message
+            sig_count = len(signatures)
+            raise QuerySignatureVerificationFailed(
+                f"Query signature verification failed for all {sig_count} signature(s). "
+                "This may indicate: invalid signatures, outdated timestamps, or node key lookup failures."
+            )
 
     # ----------- HTTP endpoints -----------
 
@@ -622,6 +976,8 @@ class Agent:
         *,
         return_type=None,
         effective_canister_id=None,
+        verify_query_signatures: Optional[bool] = None,
+        timeout: Optional[float] = None,
     ):
         """
         High-level query (one-shot, no polling):
@@ -631,6 +987,9 @@ class Agent:
               * anything else acceptable by `icp_candid.candid.encode`
                 (e.g. [{'type': Types.Nat, 'value': 42}])
           - If `return_type` is provided and reply is DIDL, it will be decoded.
+          - `verify_query_signatures`: Whether to verify query response signatures.
+                                     If None, uses Agent-level configuration (default: True).
+          - `timeout`: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC.
         """
         didl = self._encode_arg(arg)
         return self.query_raw(
@@ -639,6 +998,8 @@ class Agent:
             didl,
             return_type=return_type,
             effective_canister_id=effective_canister_id,
+            verify_query_signatures=verify_query_signatures,
+            timeout=timeout,
         )
 
     async def query_async(
@@ -650,10 +1011,15 @@ class Agent:
         return_type=None,
         effective_canister_id=None,
         timeout: Optional[float] = None,
+        verify_query_signatures: Optional[bool] = None,
     ):
         """
         High-level async query (one-shot, no polling).
         Same as query() but async; arg encoding and return_type handling are identical.
+        
+        Args:
+            verify_query_signatures: Whether to verify query response signatures.
+                                   If None, uses Agent-level configuration (default: True).
         """
         didl = self._encode_arg(arg)
         return await self.query_raw_async(
@@ -663,6 +1029,7 @@ class Agent:
             return_type=return_type,
             effective_canister_id=effective_canister_id,
             timeout=timeout,
+            verify_query_signatures=verify_query_signatures,
         )
 
     def update(
@@ -744,6 +1111,7 @@ class Agent:
         return_type=None,
         effective_canister_id=None,
         timeout: Optional[float] = None,
+        verify_query_signatures: Optional[bool] = None,
     ):
         """
         Send query request with timeout handling.
@@ -755,6 +1123,8 @@ class Agent:
             return_type: Optional return type for decoding.
             effective_canister_id: Optional effective canister ID.
             timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC (30 seconds).
+            verify_query_signatures: Whether to verify query response signatures.
+                                   If None, uses Agent-level configuration (default: True).
         
         Returns:
             Decoded result if return_type is provided, otherwise raw bytes.
@@ -762,6 +1132,7 @@ class Agent:
         Raises:
             TimeoutWaitingForResponse: If the request times out.
             ReplicaReject: If the query is rejected.
+            QuerySignatureVerificationFailed: If signature verification fails.
         """
         req = {
             "request_type": "query",
@@ -781,102 +1152,16 @@ class Agent:
         if not isinstance(result, dict) or "status" not in result:
             raise RuntimeError("Malformed result: " + repr(result))
 
+        # Determine if we should verify signatures
+        should_verify = verify_query_signatures if verify_query_signatures is not None else self.verify_query_signatures
+        
+        # Verify query response signatures if enabled
+        if should_verify:
+            self._verify_query_response_signatures(result, request_id, target_canister)
+
         status = result["status"]
         if status == "replied":
             reply_arg = result["reply"]["arg"]
-            
-            # NOTE: Replica signature verification is disabled in v2.2.0
-            # This feature is commented out and will be enabled in a future release
-            # once certificate delegation issues are resolved.
-            # The verify_replica_signatures parameter is kept for API compatibility but has no effect.
-            # 
-            # if self.verify_replica_signatures and "signatures" in result:
-            #     signatures = result["signatures"]
-            #     if not isinstance(signatures, list) or len(signatures) == 0:
-            #         raise RuntimeError("Query response contains empty signatures list")
-            #     
-            #     # Get subnet_id from canister's certificate delegation
-            #     # According to ICP spec, subnet_id is in the delegation chain
-            #     subnet_id = None
-            #     try:
-            #         # Read canister state to get certificate with delegation
-            #         paths = [[b"time"]]  # Minimal path to get certificate
-            #         cert = self.read_state_raw(target_canister, paths)
-            #         
-            #         # Extract subnet_id from delegation if present
-            #         if cert.delegation is not None:
-            #             subnet_id_raw = cert.delegation.get("subnet_id") or cert.delegation.get(b"subnet_id")
-            #             if subnet_id_raw is not None:
-            #                 subnet_id = bytes(subnet_id_raw)
-            #         
-            #         # If no delegation, this might be NNS canister (no subnet_id needed)
-            #         # For now, skip verification if subnet_id is not available
-            #     except Exception as e:
-            #         # If we can't get subnet_id, we can't verify signatures
-            #         # This is acceptable for backward compatibility
-            #         # In production, subnet_id should be available from routing table
-            #         pass
-            #     
-            #     if subnet_id:
-            #         # Verify at least one signature
-            #         verified = False
-            #         for sig_obj in signatures:
-            #             if not isinstance(sig_obj, dict):
-            #                 continue
-            #             node_identity = sig_obj.get("identity")
-            #             sig_bytes = sig_obj.get("signature")
-            #             timestamp_ns = sig_obj.get("timestamp")
-            #             
-            #             if not all([node_identity, sig_bytes, timestamp_ns]):
-            #                 continue
-            #             
-            #             # Convert to bytes if needed
-            #             if isinstance(node_identity, str):
-            #                 node_identity = Principal.from_str(node_identity).bytes
-            #             elif not isinstance(node_identity, bytes):
-            #                 node_identity = bytes(node_identity)
-            #             
-            #             if isinstance(sig_bytes, str):
-            #                 sig_bytes = bytes.fromhex(sig_bytes)
-            #             elif not isinstance(sig_bytes, bytes):
-            #                 sig_bytes = bytes(sig_bytes)
-            #             
-            #             if isinstance(timestamp_ns, str):
-            #                 timestamp_ns = int(timestamp_ns)
-            #             
-            #             try:
-            #                 if self._verify_replica_signature(
-            #                     request_id, timestamp_ns, reply_arg, sig_bytes, 
-            #                     node_identity, subnet_id
-            #                 ):
-            #                     verified = True
-            #                     break
-            #             except Exception as e:
-            #                 # Log but continue trying other signatures
-            #                 continue
-            #         
-            #         if not verified:
-            #             # Use the first signature's node_id for error reporting
-            #             first_node_id = None
-            #             for sig_obj in signatures:
-            #                 if isinstance(sig_obj, dict) and sig_obj.get("identity"):
-            #                     node_id = sig_obj.get("identity")
-            #                     if isinstance(node_id, str):
-            #                         node_id = Principal.from_str(node_id).bytes
-            #                     elif not isinstance(node_id, bytes):
-            #                         node_id = bytes(node_id)
-            #                     first_node_id = node_id
-            #                     break
-            #             if first_node_id:
-            #                 raise ReplicaSignatureVerificationFailed(
-            #                     first_node_id, subnet_id, request_id,
-            #                     f"Replica signature verification failed for all {len(signatures)} signatures"
-            #                 )
-            #             else:
-            #                 raise ReplicaSignatureVerificationFailed(
-            #                     b"", subnet_id, request_id,
-            #                     f"Replica signature verification failed: no valid signatures found"
-            #                 )
             
             if reply_arg[:4] == b"DIDL":
                 return decode(reply_arg, return_type)
@@ -897,6 +1182,7 @@ class Agent:
         return_type=None,
         effective_canister_id=None,
         timeout: Optional[float] = None,
+        verify_query_signatures: Optional[bool] = None,
     ):
         """
         Send query request asynchronously with timeout handling.
@@ -908,6 +1194,8 @@ class Agent:
             return_type: Optional return type for decoding.
             effective_canister_id: Optional effective canister ID.
             timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC (30 seconds).
+            verify_query_signatures: Whether to verify query response signatures.
+                                   If None, uses Agent-level configuration (default: True).
         
         Returns:
             Decoded result if return_type is provided, otherwise raw bytes.
@@ -915,6 +1203,7 @@ class Agent:
         Raises:
             TimeoutWaitingForResponse: If the request times out.
             ReplicaReject: If the query is rejected.
+            QuerySignatureVerificationFailed: If signature verification fails.
         """
         req = {
             "request_type": "query",
@@ -934,102 +1223,16 @@ class Agent:
         if not isinstance(result, dict) or "status" not in result:
             raise RuntimeError("Malformed result: " + repr(result))
 
+        # Determine if we should verify signatures
+        should_verify = verify_query_signatures if verify_query_signatures is not None else self.verify_query_signatures
+        
+        # Verify query response signatures if enabled
+        if should_verify:
+            await self._verify_query_response_signatures_async(result, request_id, target_canister)
+
         status = result["status"]
         if status == "replied":
             reply_arg = result["reply"]["arg"]
-            
-            # NOTE: Replica signature verification is disabled in v2.2.0
-            # This feature is commented out and will be enabled in a future release
-            # once certificate delegation issues are resolved.
-            # The verify_replica_signatures parameter is kept for API compatibility but has no effect.
-            # 
-            # if self.verify_replica_signatures and "signatures" in result:
-            #     signatures = result["signatures"]
-            #     if not isinstance(signatures, list) or len(signatures) == 0:
-            #         raise RuntimeError("Query response contains empty signatures list")
-            #     
-            #     # Get subnet_id from canister's certificate delegation
-            #     # According to ICP spec, subnet_id is in the delegation chain
-            #     subnet_id = None
-            #     try:
-            #         # Read canister state to get certificate with delegation
-            #         paths = [[b"time"]]  # Minimal path to get certificate
-            #         cert = await self.read_state_raw_async(target_canister, paths)
-            #         
-            #         # Extract subnet_id from delegation if present
-            #         if cert.delegation is not None:
-            #             subnet_id_raw = cert.delegation.get("subnet_id") or cert.delegation.get(b"subnet_id")
-            #             if subnet_id_raw is not None:
-            #                 subnet_id = bytes(subnet_id_raw)
-            #         
-            #         # If no delegation, this might be NNS canister (no subnet_id needed)
-            #         # For now, skip verification if subnet_id is not available
-            #     except Exception as e:
-            #         # If we can't get subnet_id, we can't verify signatures
-            #         # This is acceptable for backward compatibility
-            #         # In production, subnet_id should be available from routing table
-            #         pass
-            #     
-            #     if subnet_id:
-            #         # Verify at least one signature
-            #         verified = False
-            #         for sig_obj in signatures:
-            #             if not isinstance(sig_obj, dict):
-            #                 continue
-            #             node_identity = sig_obj.get("identity")
-            #             sig_bytes = sig_obj.get("signature")
-            #             timestamp_ns = sig_obj.get("timestamp")
-            #             
-            #             if not all([node_identity, sig_bytes, timestamp_ns]):
-            #                 continue
-            #             
-            #             # Convert to bytes if needed
-            #             if isinstance(node_identity, str):
-            #                 node_identity = Principal.from_str(node_identity).bytes
-            #             elif not isinstance(node_identity, bytes):
-            #                 node_identity = bytes(node_identity)
-            #             
-            #             if isinstance(sig_bytes, str):
-            #                 sig_bytes = bytes.fromhex(sig_bytes)
-            #             elif not isinstance(sig_bytes, bytes):
-            #                 sig_bytes = bytes(sig_bytes)
-            #             
-            #             if isinstance(timestamp_ns, str):
-            #                 timestamp_ns = int(timestamp_ns)
-            #             
-            #             try:
-            #                 if await self._verify_replica_signature_async(
-            #                     request_id, timestamp_ns, reply_arg, sig_bytes, 
-            #                     node_identity, subnet_id
-            #                 ):
-            #                     verified = True
-            #                     break
-            #             except Exception as e:
-            #                 # Log but continue trying other signatures
-            #                 continue
-            #         
-            #         if not verified:
-            #             # Use the first signature's node_id for error reporting
-            #             first_node_id = None
-            #             for sig_obj in signatures:
-            #                 if isinstance(sig_obj, dict) and sig_obj.get("identity"):
-            #                     node_id = sig_obj.get("identity")
-            #                     if isinstance(node_id, str):
-            #                         node_id = Principal.from_str(node_id).bytes
-            #                     elif not isinstance(node_id, bytes):
-            #                         node_id = bytes(node_id)
-            #                     first_node_id = node_id
-            #                     break
-            #             if first_node_id:
-            #                 raise ReplicaSignatureVerificationFailed(
-            #                     first_node_id, subnet_id, request_id,
-            #                     f"Replica signature verification failed for all {len(signatures)} signatures"
-            #                 )
-            #             else:
-            #                 raise ReplicaSignatureVerificationFailed(
-            #                     b"", subnet_id, request_id,
-            #                     f"Replica signature verification failed: no valid signatures found"
-            #                 )
             
             if reply_arg[:4] == b"DIDL":
                 return decode(reply_arg, return_type)
@@ -1304,10 +1507,16 @@ class Agent:
 
         return certificate
 
-    def read_state_subnet_raw(self, subnet_id, paths):
+    def read_state_subnet_raw(self, subnet_id, paths, verify_certificate: bool = True):
         """
         Read subnet state with certificate verification.
         This is for subnet-level queries and skips canister_ranges check.
+        
+        Args:
+            subnet_id: Subnet ID string.
+            paths: List of paths to read.
+            verify_certificate: Whether to verify certificate (default: True).
+                               Set to False to skip BLS verification (e.g., for query signature verification).
         """
         req = {
             "request_type": "read_state",
@@ -1332,16 +1541,24 @@ class Agent:
         
         cert_dict = cbor2.loads(decoded_obj["certificate"])
         certificate = Certificate(cert_dict)
-        # Skip canister_ranges check for subnet read_state
-        certificate.assert_certificate_valid(subnet_id, skip_canister_range_check=True)
-        certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
+        
+        if verify_certificate:
+            # Skip canister_ranges check for subnet read_state
+            certificate.assert_certificate_valid(subnet_id, skip_canister_range_check=True)
+            certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
 
         return certificate
 
-    async def read_state_subnet_raw_async(self, subnet_id, paths):
+    async def read_state_subnet_raw_async(self, subnet_id, paths, verify_certificate: bool = True):
         """
         Read subnet state with certificate verification (async).
         This is for subnet-level queries and skips canister_ranges check.
+        
+        Args:
+            subnet_id: Subnet ID string.
+            paths: List of paths to read.
+            verify_certificate: Whether to verify certificate (default: True).
+                               Set to False to skip BLS verification (e.g., for query signature verification).
         """
         req = {
             "request_type": "read_state",
@@ -1362,9 +1579,11 @@ class Agent:
         decoded_obj = cbor2.loads(raw_bytes)
         cert_dict = cbor2.loads(decoded_obj["certificate"])
         certificate = Certificate(cert_dict)
-        # Skip canister_ranges check for subnet read_state
-        certificate.assert_certificate_valid(subnet_id, skip_canister_range_check=True)
-        certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
+        
+        if verify_certificate:
+            # Skip canister_ranges check for subnet read_state
+            certificate.assert_certificate_valid(subnet_id, skip_canister_range_check=True)
+            certificate.verify_cert_timestamp(self.ingress_expiry * NANOSECONDS)
         
         return certificate
 

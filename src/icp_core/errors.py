@@ -411,3 +411,248 @@ class ReplicaSignatureVerificationFailed(SecurityError):
                 f"Replica signature verification failed for node {node_id_str} "
                 f"on request {request_id.hex()[:16]}..."
             )
+
+
+class QuerySignatureVerificationFailed(SecurityError):
+    """
+    Raised when query response signature verification fails.
+    
+    This occurs when verifying the signature of a query response.
+    Failure can indicate:
+    - The signature is invalid or tampered
+    - The node is not authorized
+    - The signature format is incorrect
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except QuerySignatureVerificationFailed:
+        ...     print("Query signature verification failed!")
+    """
+    
+    def __init__(self, message: str = "Query signature verification failed"):
+        """
+        Initialize QuerySignatureVerificationFailed.
+        
+        Args:
+            message: Optional detailed error message.
+        """
+        super().__init__(message)
+        self.message = message
+
+
+class MissingSignature(SecurityError):
+    """
+    Raised when a query response is missing signatures.
+    
+    Query responses should contain at least one signature from a replica node.
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except MissingSignature:
+        ...     print("Query response missing signature!")
+    """
+    
+    def __init__(self, message: str = "Missing signature in query response"):
+        """
+        Initialize MissingSignature.
+        
+        Args:
+            message: Optional detailed error message.
+        """
+        super().__init__(message)
+        self.message = message
+
+
+class TooManySignatures(SecurityError):
+    """
+    Raised when a query response contains more signatures than expected.
+    
+    The number of signatures should not exceed the number of nodes in the subnet.
+    
+    Attributes:
+        had: The number of signatures found.
+        needed: The maximum number of signatures expected.
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except TooManySignatures as e:
+        ...     print(f"Too many signatures: had {e.had}, needed {e.needed}")
+    """
+    
+    def __init__(self, had: int, needed: int):
+        """
+        Initialize TooManySignatures.
+        
+        Args:
+            had: The number of signatures found.
+            needed: The maximum number of signatures expected.
+        """
+        self.had = had
+        self.needed = needed
+        super().__init__(f"Too many signatures: had {had}, needed {needed}")
+
+
+class CertificateOutdated(SecurityError):
+    """
+    Raised when a certificate or signature timestamp is outdated.
+    
+    This can occur when:
+    - The signature timestamp exceeds the ingress expiry time
+    - The certificate has expired
+    
+    Attributes:
+        max_age: The maximum allowed age (in seconds).
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except CertificateOutdated as e:
+        ...     print(f"Certificate outdated: max age {e.max_age}s")
+    """
+    
+    def __init__(self, max_age: float, message: Optional[str] = None):
+        """
+        Initialize CertificateOutdated.
+        
+        Args:
+            max_age: The maximum allowed age in seconds.
+            message: Optional custom error message.
+        """
+        self.max_age = max_age
+        if message:
+            super().__init__(message)
+        else:
+            super().__init__(f"Certificate is outdated (max age: {max_age}s)")
+
+
+class CertificateNotAuthorized(SecurityError):
+    """
+    Raised when a certificate is not authorized to respond to queries for a canister.
+    
+    This can occur when:
+    - The node is not part of the subnet
+    - The canister is not in the subnet's canister ranges
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except CertificateNotAuthorized:
+        ...     print("Certificate not authorized!")
+    """
+    
+    def __init__(self, message: str = "Certificate is not authorized to respond to queries for this canister"):
+        """
+        Initialize CertificateNotAuthorized.
+        
+        Args:
+            message: Optional detailed error message.
+        """
+        super().__init__(message)
+        self.message = message
+
+
+class DerKeyLengthMismatch(SecurityError):
+    """
+    Raised when a DER-encoded key has an incorrect length.
+    
+    Node public keys should be 44 bytes (12-byte DER prefix + 32-byte Ed25519 key).
+    
+    Attributes:
+        expected: The expected key length in bytes.
+        actual: The actual key length in bytes.
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except DerKeyLengthMismatch as e:
+        ...     print(f"DER key length mismatch: expected {e.expected}, got {e.actual}")
+    """
+    
+    def __init__(self, expected: int, actual: int):
+        """
+        Initialize DerKeyLengthMismatch.
+        
+        Args:
+            expected: The expected key length in bytes.
+            actual: The actual key length in bytes.
+        """
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"DER key length mismatch: expected {expected}, got {actual}")
+
+
+class DerPrefixMismatch(SecurityError):
+    """
+    Raised when a DER-encoded key has an incorrect prefix.
+    
+    Node public keys should start with the Ed25519 DER prefix.
+    
+    Attributes:
+        expected: The expected DER prefix bytes.
+        actual: The actual DER prefix bytes.
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except DerPrefixMismatch as e:
+        ...     print(f"DER prefix mismatch: expected {e.expected.hex()}, got {e.actual.hex()}")
+    """
+    
+    def __init__(self, expected: bytes, actual: bytes):
+        """
+        Initialize DerPrefixMismatch.
+        
+        Args:
+            expected: The expected DER prefix bytes.
+            actual: The actual DER prefix bytes.
+        """
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"DER prefix mismatch: expected {expected.hex()}, got {actual.hex()}")
+
+
+class MalformedPublicKey(SecurityError):
+    """
+    Raised when a public key format is invalid or malformed.
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except MalformedPublicKey:
+        ...     print("Malformed public key!")
+    """
+    
+    def __init__(self, message: str = "Malformed public key"):
+        """
+        Initialize MalformedPublicKey.
+        
+        Args:
+            message: Optional detailed error message.
+        """
+        super().__init__(message)
+        self.message = message
+
+
+class MalformedSignature(SecurityError):
+    """
+    Raised when a signature format is invalid or malformed.
+    
+    Example:
+        >>> try:
+        ...     agent.query("canister-id", "method", args)
+        ... except MalformedSignature:
+        ...     print("Malformed signature!")
+    """
+    
+    def __init__(self, message: str = "Malformed signature"):
+        """
+        Initialize MalformedSignature.
+        
+        Args:
+            message: Optional detailed error message.
+        """
+        super().__init__(message)
+        self.message = message
