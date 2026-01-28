@@ -46,10 +46,11 @@ class Canister:
         # Store methods dictionary as actor (for backward compatibility)
         self.actor = methods_dict
         
-        # Dynamically bind methods to Canister instance
+        # Dynamically bind methods to Canister instance (sync and async)
         for name, method_type in methods_dict.items():
             self.methods[name] = method_type
             setattr(self, name, self._create_method(name, method_type))
+            setattr(self, f"{name}_async", self._create_async_method(name, method_type))
 
     def _create_method(self, name, method_type):
         """
@@ -117,8 +118,59 @@ class Canister:
             
         return method
 
+    def _create_async_method(self, name, method_type):
+        """
+        Create async method that calls agent.query_async() or agent.update_async().
+        Same parameter handling as _create_method.
+        """
+        async def async_method(*args, **kwargs):
+            arg_types = method_type.argTypes
+            ret_types = method_type.retTypes
+            verify_certificate = kwargs.pop('verify_certificate', True)
+
+            if kwargs and not args and len(arg_types) == 1:
+                args = (kwargs,)
+            elif kwargs:
+                pass
+
+            if len(args) != len(arg_types):
+                raise TypeError(
+                    f"{name}() takes {len(arg_types)} argument(s) but {len(args)} were given"
+                )
+
+            processed_args = []
+            for i, val in enumerate(args):
+                if i < len(arg_types):
+                    processed_args.append({'type': arg_types[i], 'value': val})
+
+            annotations = method_type.annotations
+            is_query = 'query' in annotations
+
+            if is_query:
+                res = await self.agent.query_async(
+                    self.canister_id,
+                    name,
+                    arg=processed_args if processed_args else None,
+                    return_type=ret_types
+                )
+            else:
+                res = await self.agent.update_async(
+                    self.canister_id,
+                    name,
+                    arg=processed_args if processed_args else None,
+                    return_type=ret_types,
+                    verify_certificate=verify_certificate
+                )
+
+            return res
+
+        return async_method
+
     def __getattr__(self, name):
         if name in self.methods:
             # Use object.__getattribute__ to avoid infinite recursion
+            return object.__getattribute__(self, name)
+        # Support async method lookup: {method_name}_async
+        if name.endswith('_async') and name[:-6] in self.methods:
             return object.__getattribute__(self, name)
         raise AttributeError(f"'Canister' object has no attribute '{name}'")
