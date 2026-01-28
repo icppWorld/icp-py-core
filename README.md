@@ -20,9 +20,12 @@ This version introduces a modular architecture, protocol upgrades, and new APIs 
 **Highlights:**
 - ✅ Modular structure under `src/` (`icp_agent`, `icp_identity`, `icp_candid`, etc.)
 - ✅ Updated boundary node endpoints (v3/v4: `/api/v3/canister/.../query`, `/api/v4/canister/.../call`)
-- ✅ Optional **certificate verification** via `blst`
-- ✅ Type-safe Candid encoding/decoding
+- ✅ **Certificate verification** enabled by default via `blst` (BLS12-381 signatures)
+- ✅ Type-safe Candid encoding/decoding with Rust-based parser (multiple times faster)
 - ✅ Pythonic high-level `Agent.update()` and `Agent.query()` methods
+- ✅ HTTP/2 support in async methods for improved performance
+- ✅ Comprehensive structured error handling hierarchy (11 error classes)
+- ✅ High-level wrappers for Ledger, Governance, Cycles Wallet, and Management canisters
 
 🙏 Special thanks to the original `ic-py` author for their foundational work.
 
@@ -519,12 +522,16 @@ except RuntimeError as e:
 
 ## 🧠 Features
 
-1. 🧩 Candid encode & decode  
+1. 🧩 Candid encode & decode (Rust-based parser for high performance)  
 2. 🔐 ed25519 & secp256k1 identities  
 3. 🧾 Principal utilities (strict DER mode)  
-4. ⚙️ High-level canister calls via Agent  
+4. ⚙️ High-level canister calls via Agent (`update()`, `query()`)  
 5. 🪙 Support for Ledger / Governance / Management / Cycles Wallet  
-6. 🔁 Sync & async APIs  
+6. 🔁 Sync & async APIs (low-level methods)  
+7. 🔒 Certificate verification enabled by default (BLS12-381)  
+8. ⚡ HTTP/2 support in async methods  
+9. 🛡️ Structured error handling (11 error classes)  
+10. 📦 Comprehensive example code library  
 
 ---
 
@@ -568,9 +575,11 @@ We maintain release notes on GitHub Releases:
 
 See [ROADMAP.md](./ROADMAP.md)
 
-✅ Milestone 1: v3 endpoint migration & polling stability  
-✅ Milestone 2: Certificate verification with `blst`  
-🔜 Milestone 3: ICRC utilities, Candid enhancements, type reflection  
+✅ **Milestone 1**: v3/v4 endpoint migration, timeouts & error classification  
+✅ **Milestone 2**: Certificate verification with `blst` (enabled by default)  
+✅ **Milestone 3**: Candid type-system enhancements (Rust parser, DIDLoader, VarT support)  
+✅ **Milestone 4**: Expanded API surface (Ledger, Governance, Cycles Wallet, Management), code optimization, HTTP/2 support, structured error handling  
+🔜 **Milestone 5**: Auto-fetch DID files, high-level async API methods (`update_async`, `query_async`), Canister async method support, replica-signed queries  
 
 ---
 

@@ -257,6 +257,38 @@ class IngressExpiryError(ICError):
         super().__init__(message)
 
 
+class TimeoutWaitingForResponse(ICError):
+    """
+    Raised when waiting for a canister response exceeds the configured timeout.
+    
+    This error is used by higher-level Agent APIs (e.g. update_raw/poll)
+    when a request has been successfully submitted but no terminal response
+    (replied/rejected/done) is obtained within the caller-provided timeout.
+    
+    Attributes:
+        timeout_seconds: The timeout threshold in seconds.
+        request_id: Optional request ID associated with the timed-out request.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        timeout_seconds: float,
+        request_id: Optional[bytes] = None,
+    ):
+        """
+        Initialize TimeoutWaitingForResponse.
+        
+        Args:
+            message: Human-readable description of the timeout.
+            timeout_seconds: Timeout threshold in seconds.
+            request_id: Optional request ID for additional context.
+        """
+        self.timeout_seconds = timeout_seconds
+        self.request_id = request_id
+        super().__init__(message)
+
+
 class CertificateVerificationError(SecurityError):
     """
     Raised when certificate verification fails.

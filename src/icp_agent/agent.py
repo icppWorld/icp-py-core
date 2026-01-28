@@ -28,6 +28,7 @@ import time
 import asyncio
 import cbor2
 import httpx
+from httpx import Timeout, TimeoutException
 
 from icp_candid import decode
 from icp_certificate.certificate import IC_ROOT_KEY, Certificate
@@ -40,6 +41,7 @@ from icp_core.errors import (
     NodeKeyNotFoundError,
     ReplicaSignatureVerificationFailed,
     IngressExpiryError,
+    TimeoutWaitingForResponse,
 )
 
 IC_REQUEST_DOMAIN_SEPARATOR = b"\x0Aic-request"
@@ -50,6 +52,9 @@ IC_RESPONSE_DOMAIN_SEPARATOR = b"\x0Bic-response"
 
 DEFAULT_POLL_TIMEOUT_SECS = 60.0
 """Default timeout for polling update call results in seconds."""
+
+DEFAULT_QUERY_TIMEOUT_SEC = 30.0
+"""Default timeout for query calls in seconds (30 seconds)."""
 
 # Exponential backoff defaults
 DEFAULT_INITIAL_DELAY = 0.5   # seconds
@@ -511,13 +516,67 @@ class Agent:
 
     # ----------- HTTP endpoints -----------
 
-    def query_endpoint(self, canister_id, data):
-        raw_bytes = self.client.query(canister_id, data)
-        return cbor2.loads(raw_bytes)
+    def query_endpoint(self, canister_id, data, timeout: Optional[float] = None):
+        """
+        Send query request to endpoint with timeout handling.
+        
+        Args:
+            canister_id: The canister ID to query.
+            data: CBOR-encoded request data.
+            timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC.
+        
+        Returns:
+            Decoded CBOR response.
+        
+        Raises:
+            TimeoutWaitingForResponse: If the request times out.
+            TransportError: For other transport errors.
+        """
+        # Use default timeout if not provided
+        timeout_sec = timeout if timeout is not None else DEFAULT_QUERY_TIMEOUT_SEC
+        timeout_obj = Timeout(timeout_sec)
+        
+        try:
+            raw_bytes = self.client.query(canister_id, data, timeout=timeout_obj)
+            return cbor2.loads(raw_bytes)
+        except TimeoutException as e:
+            # Convert httpx timeout to unified TimeoutWaitingForResponse
+            raise TimeoutWaitingForResponse(
+                f"Query request timed out after {timeout_sec}s",
+                timeout_seconds=timeout_sec,
+                request_id=None,  # Query doesn't have request_id at this point
+            ) from e
 
-    async def query_endpoint_async(self, canister_id, data):
-        raw_bytes = await self.client.query_async(canister_id, data)
-        return cbor2.loads(raw_bytes)
+    async def query_endpoint_async(self, canister_id, data, timeout: Optional[float] = None):
+        """
+        Send query request to endpoint asynchronously with timeout handling.
+        
+        Args:
+            canister_id: The canister ID to query.
+            data: CBOR-encoded request data.
+            timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC.
+        
+        Returns:
+            Decoded CBOR response.
+        
+        Raises:
+            TimeoutWaitingForResponse: If the request times out.
+            TransportError: For other transport errors.
+        """
+        # Use default timeout if not provided
+        timeout_sec = timeout if timeout is not None else DEFAULT_QUERY_TIMEOUT_SEC
+        timeout_obj = Timeout(timeout_sec)
+        
+        try:
+            raw_bytes = await self.client.query_async(canister_id, data, timeout=timeout_obj)
+            return cbor2.loads(raw_bytes)
+        except TimeoutException as e:
+            # Convert httpx timeout to unified TimeoutWaitingForResponse
+            raise TimeoutWaitingForResponse(
+                f"Query request timed out after {timeout_sec}s",
+                timeout_seconds=timeout_sec,
+                request_id=None,  # Query doesn't have request_id at this point
+            ) from e
 
     def call_endpoint(self, canister_id, data):
         return self.client.call(canister_id, data)
@@ -582,6 +641,30 @@ class Agent:
             effective_canister_id=effective_canister_id,
         )
 
+    async def query_async(
+        self,
+        canister_id,
+        method_name: str,
+        arg=None,
+        *,
+        return_type=None,
+        effective_canister_id=None,
+        timeout: Optional[float] = None,
+    ):
+        """
+        High-level async query (one-shot, no polling).
+        Same as query() but async; arg encoding and return_type handling are identical.
+        """
+        didl = self._encode_arg(arg)
+        return await self.query_raw_async(
+            canister_id,
+            method_name,
+            didl,
+            return_type=return_type,
+            effective_canister_id=effective_canister_id,
+            timeout=timeout,
+        )
+
     def update(
             self,
             canister_id,
@@ -601,6 +684,8 @@ class Agent:
         Polling/backoff options are handled inside update_raw()/poll().
         """
         didl = self._encode_arg(arg)
+        # Use default timeout if not provided
+        poll_timeout = timeout if timeout is not None else DEFAULT_POLL_TIMEOUT_SECS
         return self.update_raw(
             canister_id,
             method_name,
@@ -608,11 +693,76 @@ class Agent:
             return_type=return_type,
             effective_canister_id=effective_canister_id,
             verify_certificate=verify_certificate,
+            timeout=poll_timeout,
+        )
+
+    async def update_async(
+        self,
+        canister_id,
+        method_name: str,
+        arg=None,
+        *,
+        return_type=None,
+        effective_canister_id=None,
+        verify_certificate: bool = True,
+        initial_delay: float = None,
+        max_interval: float = None,
+        multiplier: float = None,
+        timeout: float = None,
+    ):
+        """
+        High-level async update: encode arg to DIDL and delegate to update_raw_async().
+        Polling/backoff options are passed to poll_async() via update_raw_async(**kwargs).
+        """
+        didl = self._encode_arg(arg)
+        poll_timeout = timeout if timeout is not None else DEFAULT_POLL_TIMEOUT_SECS
+        kwargs = {}
+        if initial_delay is not None:
+            kwargs["initial_delay"] = initial_delay
+        if max_interval is not None:
+            kwargs["max_interval"] = max_interval
+        if multiplier is not None:
+            kwargs["multiplier"] = multiplier
+        return await self.update_raw_async(
+            canister_id,
+            method_name,
+            didl,
+            return_type=return_type,
+            effective_canister_id=effective_canister_id,
+            verify_certificate=verify_certificate,
+            timeout=poll_timeout,
+            **kwargs,
         )
 
     # ----------- Query (one-shot) -----------
 
-    def query_raw(self, canister_id, method_name, arg, return_type=None, effective_canister_id=None):
+    def query_raw(
+        self,
+        canister_id,
+        method_name,
+        arg,
+        return_type=None,
+        effective_canister_id=None,
+        timeout: Optional[float] = None,
+    ):
+        """
+        Send query request with timeout handling.
+        
+        Args:
+            canister_id: The canister ID to query.
+            method_name: The method name to call.
+            arg: The argument bytes (DIDL-encoded).
+            return_type: Optional return type for decoding.
+            effective_canister_id: Optional effective canister ID.
+            timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC (30 seconds).
+        
+        Returns:
+            Decoded result if return_type is provided, otherwise raw bytes.
+        
+        Raises:
+            TimeoutWaitingForResponse: If the request times out.
+            ReplicaReject: If the query is rejected.
+        """
         req = {
             "request_type": "query",
             "sender": self.identity.sender().bytes,
@@ -626,7 +776,7 @@ class Agent:
             req["nonce"] = self.nonce_factory()
         request_id, signed_cbor = sign_request(req, self.identity)
         target_canister = canister_id if effective_canister_id is None else effective_canister_id
-        result = self.query_endpoint(target_canister, signed_cbor)
+        result = self.query_endpoint(target_canister, signed_cbor, timeout=timeout)
 
         if not isinstance(result, dict) or "status" not in result:
             raise RuntimeError("Malformed result: " + repr(result))
@@ -739,7 +889,33 @@ class Agent:
         else:
             raise RuntimeError("Unknown status: " + repr(status))
 
-    async def query_raw_async(self, canister_id, method_name, arg, return_type=None, effective_canister_id=None):
+    async def query_raw_async(
+        self,
+        canister_id,
+        method_name,
+        arg,
+        return_type=None,
+        effective_canister_id=None,
+        timeout: Optional[float] = None,
+    ):
+        """
+        Send query request asynchronously with timeout handling.
+        
+        Args:
+            canister_id: The canister ID to query.
+            method_name: The method name to call.
+            arg: The argument bytes (DIDL-encoded).
+            return_type: Optional return type for decoding.
+            effective_canister_id: Optional effective canister ID.
+            timeout: Timeout in seconds. If None, uses DEFAULT_QUERY_TIMEOUT_SEC (30 seconds).
+        
+        Returns:
+            Decoded result if return_type is provided, otherwise raw bytes.
+        
+        Raises:
+            TimeoutWaitingForResponse: If the request times out.
+            ReplicaReject: If the query is rejected.
+        """
         req = {
             "request_type": "query",
             "sender": self.identity.sender().bytes,
@@ -753,7 +929,7 @@ class Agent:
             req["nonce"] = self.nonce_factory()
         request_id, signed_cbor = sign_request(req, self.identity)
         target_canister = canister_id if effective_canister_id is None else effective_canister_id
-        result = await self.query_endpoint_async(target_canister, signed_cbor)
+        result = await self.query_endpoint_async(target_canister, signed_cbor, timeout=timeout)
 
         if not isinstance(result, dict) or "status" not in result:
             raise RuntimeError("Malformed result: " + repr(result))
@@ -868,8 +1044,38 @@ class Agent:
 
     # ----------- Update (call + poll) -----------
 
-    def update_raw(self, canister_id, method_name, arg, return_type=None,
-                   effective_canister_id=None, verify_certificate: bool = True):
+    def update_raw(
+        self,
+        canister_id,
+        method_name,
+        arg,
+        return_type=None,
+        effective_canister_id=None,
+        verify_certificate: bool = True,
+        timeout: Optional[float] = None,
+    ):
+        """
+        Send update call and poll for result with timeout handling.
+        
+        Args:
+            canister_id: The canister ID to call.
+            method_name: The method name to call.
+            arg: The argument bytes (DIDL-encoded).
+            return_type: Optional return type for decoding.
+            effective_canister_id: Optional effective canister ID.
+            verify_certificate: Whether to verify certificate.
+            timeout: Timeout in seconds for polling. If None, uses DEFAULT_POLL_TIMEOUT_SECS.
+        
+        Returns:
+            Decoded result if return_type is provided, otherwise raw bytes.
+        
+        Raises:
+            TimeoutWaitingForResponse: If polling times out.
+            ReplicaReject: If the call is rejected.
+        """
+        # Use default timeout if not provided
+        poll_timeout = timeout if timeout is not None else DEFAULT_POLL_TIMEOUT_SECS
+        
         req = {
             "request_type": "call",
             "sender": self.identity.sender().bytes,
@@ -925,11 +1131,23 @@ class Agent:
                 raise ReplicaReject(reject_code, reject_message, error_code)
             else:
                 # Not yet terminal in certification; continue polling
-                return self.poll_and_wait(effective_id, request_id, verify_certificate, return_type=return_type)
+                return self.poll_and_wait(
+                    effective_id,
+                    request_id,
+                    verify_certificate,
+                    return_type=return_type,
+                    timeout=poll_timeout,
+                )
 
         elif status == "accepted":
             # Not yet executed; start polling
-            return self.poll_and_wait(effective_id, request_id, verify_certificate, return_type=return_type)
+            return self.poll_and_wait(
+                effective_id,
+                request_id,
+                verify_certificate,
+                return_type=return_type,
+                timeout=poll_timeout,
+            )
 
         elif status == "non_replicated_rejection":
             code = response_obj.get("reject_code", 0)
@@ -946,7 +1164,30 @@ class Agent:
 
     async def update_raw_async(self, canister_id, method_name, arg, return_type=None,
                                effective_canister_id=None, verify_certificate: bool = True,
-                               **kwargs):
+                               timeout: Optional[float] = None, **kwargs):
+        """
+        Send update call and poll for result asynchronously with timeout handling.
+        
+        Args:
+            canister_id: The canister ID to call.
+            method_name: The method name to call.
+            arg: The argument bytes (DIDL-encoded).
+            return_type: Optional return type for decoding.
+            effective_canister_id: Optional effective canister ID.
+            verify_certificate: Whether to verify certificate.
+            timeout: Timeout in seconds for polling. If None, uses DEFAULT_POLL_TIMEOUT_SECS.
+            **kwargs: Additional arguments passed to poll_async.
+        
+        Returns:
+            Decoded result if return_type is provided, otherwise raw bytes.
+        
+        Raises:
+            TimeoutWaitingForResponse: If polling times out.
+            ReplicaReject: If the call is rejected.
+        """
+        # Use default timeout if not provided
+        poll_timeout = timeout if timeout is not None else DEFAULT_POLL_TIMEOUT_SECS
+        
         req = {
             "request_type": "call",
             "sender": self.identity.sender().bytes,
@@ -963,8 +1204,13 @@ class Agent:
 
         _ = await self.call_endpoint_async(effective_id, request_id, signed_cbor)
 
+        # Merge timeout into kwargs if provided
+        poll_kwargs = {**kwargs}
+        if timeout is not None:
+            poll_kwargs['timeout'] = poll_timeout
+        
         status, result = await self.poll_async(
-            effective_id, request_id, verify_certificate, **kwargs
+            effective_id, request_id, verify_certificate, **poll_kwargs
         )
 
         if status == "rejected":
@@ -1144,8 +1390,34 @@ class Agent:
 
     # ----------- Polling helpers -----------
 
-    def poll_and_wait(self, canister_id, req_id, verify_certificate, return_type=None):
-        status, result = self.poll(canister_id, req_id, verify_certificate)
+    def poll_and_wait(
+        self,
+        canister_id,
+        req_id,
+        verify_certificate,
+        return_type=None,
+        timeout: Optional[float] = None,
+    ):
+        """
+        Poll for update call result and decode if return_type is provided.
+        
+        Args:
+            canister_id: The canister ID.
+            req_id: The request ID.
+            verify_certificate: Whether to verify certificate.
+            return_type: Optional return type for decoding.
+            timeout: Timeout in seconds. If None, uses DEFAULT_POLL_TIMEOUT_SECS.
+        
+        Returns:
+            Decoded result if return_type is provided, otherwise raw bytes.
+        
+        Raises:
+            TimeoutWaitingForResponse: If polling times out.
+            ReplicaReject: If the call is rejected.
+        """
+        # Use default timeout if not provided
+        poll_timeout = timeout if timeout is not None else DEFAULT_POLL_TIMEOUT_SECS
+        status, result = self.poll(canister_id, req_id, verify_certificate, timeout=poll_timeout)
         if status == "replied":
             return decode(result, return_type)
         elif status == "rejected":
@@ -1201,7 +1473,11 @@ class Agent:
                 request_accepted = True
 
             if time.monotonic() - start_monotonic >= timeout:
-                raise TimeoutError(f"Polling request {req_id.hex()} timed out after {timeout}s")
+                raise TimeoutWaitingForResponse(
+                    f"Polling request {req_id.hex()} timed out after {timeout}s",
+                    timeout_seconds=timeout,
+                    request_id=req_id,
+                )
 
             time.sleep(backoff)
             backoff = min(backoff * multiplier, max_interval)
@@ -1249,7 +1525,11 @@ class Agent:
                 request_accepted = True
 
             if time.monotonic() - start_monotonic >= timeout:
-                raise TimeoutError(f"Polling request {req_id.hex()} timed out after {timeout}s")
+                raise TimeoutWaitingForResponse(
+                    f"Polling request {req_id.hex()} timed out after {timeout}s",
+                    timeout_seconds=timeout,
+                    request_id=req_id,
+                )
 
             await asyncio.sleep(backoff)
             backoff = min(backoff * multiplier, max_interval)
