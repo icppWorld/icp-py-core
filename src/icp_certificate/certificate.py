@@ -17,12 +17,7 @@ import cbor2
 
 from icp_principal.principal import Principal
 from icp_candid.candid import LEB128
-# Import errors locally to avoid circular import
-# from icp_core.errors import (
-#     SignatureVerificationFailed,
-#     CertificateVerificationError,
-#     LookupPathMissing,
-# )
+# Errors (SignatureVerificationFailed, CertificateVerificationError, etc.) imported locally to avoid circular import
 
 
 # ----------------------------- Constants & helpers -----------------------------

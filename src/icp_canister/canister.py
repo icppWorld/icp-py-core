@@ -8,16 +8,16 @@ from icp_candid.did_loader import DIDLoader
 from icp_principal import Principal
 
 class Canister:
-    def __init__(self, agent, canister_id, candid_str=None, auto_fetch_candid=True):
+    def __init__(self, agent, canister_id, candid_str=None, auto_fetch_candid=False):
         """
         Initialize a Canister instance.
-        
+
         Args:
             agent: Agent instance for interacting with IC
             canister_id: Canister ID (can be a string or Principal object)
             candid_str: Optional Candid interface definition string. If provided, local definition will be used first.
             auto_fetch_candid: If True and candid_str is None, automatically fetch Candid interface from IC.
-                               If False, auto-fetch is disabled and candid_str must be provided manually.
+                               If False (default), no auto-fetch; candid_str=None leaves no methods bound (backward compatible).
         """
         self.agent = agent
         self.canister_id = canister_id
@@ -25,7 +25,7 @@ class Canister:
         self.methods = {}
         self.actor = None
         self.init_args = []  # Store init arguments (for Canister deployment)
-        
+
         # If local candid_str is provided, use local definition first
         if candid_str:
             self._parse_did_with_retry(candid_str)
@@ -41,6 +41,7 @@ class Canister:
                     "Please ensure the canister is deployed and contains public candid:service metadata, "
                     "or manually provide the candid_str parameter."
                 )
+        # else: candid_str=None and auto_fetch_candid=False -> no methods (backward compatible)
     
     def _fetch_candid_from_ic(self):
         """

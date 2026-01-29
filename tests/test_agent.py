@@ -1,4 +1,4 @@
-import time
+import socket
 
 import pytest
 
@@ -12,6 +12,15 @@ CANISTER_ID_TEXT = "wcrzb-2qaaa-aaaap-qhpgq-cai"
 TEST_PRIVKEY_HEX = "833fe62409237b9d62ec77587520911e9a759cec1d19755b7da901b96dca3d42"
 
 
+def _ic0_reachable():
+    """Check if ic0.app is reachable (for conditional skip of integration tests)."""
+    try:
+        socket.create_connection(("ic0.app", 443), timeout=3)
+        return True
+    except OSError:
+        return False
+
+
 @pytest.fixture(scope="session")
 def ag() -> Agent:
     client = Client(url="https://ic0.app")
@@ -19,6 +28,7 @@ def ag() -> Agent:
     return Agent(iden, client)
 
 
+@pytest.mark.skipif(not _ic0_reachable(), reason="Requires network access to ic0.app")
 def test_update_sync(ag):
     # Use verify_certificate=False to avoid requiring blst module (optional dependency)
     ret = ag.update(
@@ -31,6 +41,7 @@ def test_update_sync(ag):
     assert ret is not None
 
 
+@pytest.mark.skipif(not _ic0_reachable(), reason="Requires network access to ic0.app")
 def test_query_sync(ag):
     ret = ag.query(CANISTER_ID_TEXT, "get", [])
     assert ret is not None

@@ -178,9 +178,11 @@ def to_request_id(d: dict) -> bytes:
 
     vec = []
     for k, v in d.items():
-        # Hash the key
-        if not isinstance(k, bytes):
+        # Hash the key (only str has .encode(); bytearray/memoryview use bytes())
+        if isinstance(k, str):
             k = k.encode()
+        elif not isinstance(k, bytes):
+            k = bytes(k)
         h_k = hashlib.sha256(k).digest()
         
         # Hash the value (recursively handle nested structures)
@@ -293,13 +295,17 @@ def build_query_response_signable(
 
 def verify_ed25519_signature(signature: bytes, message: bytes, public_key: bytes) -> bool:
     """
-    Verify an Ed25519 signature.
-    
+    Verify an Ed25519 (EdDSA) signature using PyNaCl.
+
+    Ed25519 is EdDSA, not ECDSA; this uses nacl.signing.VerifyKey for correct
+    verification. The ecdsa library's VerifyingKey is for ECDSA curves and is
+    not appropriate for query response signature verification.
+
     Args:
         signature: 64-byte Ed25519 signature.
         message: Message bytes that were signed.
         public_key: 32-byte Ed25519 public key.
-    
+
     Returns:
         True if signature is valid, False otherwise.
     """
@@ -307,14 +313,16 @@ def verify_ed25519_signature(signature: bytes, message: bytes, public_key: bytes
         return False
     if len(public_key) != 32:
         return False
-    
+
     try:
-        from ecdsa import VerifyingKey
-        from ecdsa.curves import Ed25519
-        
-        vk = VerifyingKey.from_string(public_key, curve=Ed25519)
-        vk.verify(signature, message)
+        from nacl.signing import VerifyKey
+        from nacl.exceptions import BadSignatureError
+
+        vk = VerifyKey(public_key)
+        vk.verify(message, signature=signature)
         return True
+    except BadSignatureError:
+        return False
     except Exception:
         return False
 
@@ -457,7 +465,6 @@ class Agent:
         ingress_expiry: Ingress message expiry time in seconds (default: 3 minutes).
         root_key: Root public key for certificate verification (default: IC_ROOT_KEY).
         nonce_factory: Optional factory for generating nonces.
-        verify_replica_signatures: Whether to verify replica-signed query signatures (default: False).
         verify_query_signatures: Whether to verify query response signatures (default: False).
                                  Note: Standard IC query responses do not include signatures. Only
                                  replica-signed queries include signatures. Enabling this will cause
@@ -479,7 +486,6 @@ class Agent:
         nonce_factory: Optional[Any] = None,
         ingress_expiry: float = DEFAULT_INGRESS_EXPIRY_SEC,
         root_key: bytes = IC_ROOT_KEY,
-        verify_replica_signatures: bool = False,
         verify_query_signatures: bool = False
     ) -> None:
         """
@@ -491,8 +497,6 @@ class Agent:
             nonce_factory: Optional factory for generating nonces (for replay protection).
             ingress_expiry: Ingress message expiry time in seconds. Defaults to 3 minutes.
             root_key: Root public key for certificate verification. Defaults to IC_ROOT_KEY.
-            verify_replica_signatures: Whether to verify replica-signed query signatures.
-                                     Defaults to False.
             verify_query_signatures: Whether to verify query response signatures. Defaults to False.
                                     Note: Standard IC query responses do not include signatures.
                                     Only replica-signed queries include signatures. Enabling this
@@ -503,7 +507,6 @@ class Agent:
         self.ingress_expiry = ingress_expiry
         self.root_key = root_key
         self.nonce_factory = nonce_factory
-        self.verify_replica_signatures = verify_replica_signatures
         self.verify_query_signatures = verify_query_signatures
         self.node_key_cache = NodeKeyCache()
 
@@ -662,7 +665,7 @@ class Agent:
             raise MissingSignature()
         
         # Get subnet information
-        subnet_id, node_keys = self._get_subnet_by_canister(effective_canister_id)
+        subnet_id, _ = self._get_subnet_by_canister(effective_canister_id)
         
         # Check signature count
         # Note: We don't know the exact node count without fetching all nodes,
@@ -743,12 +746,10 @@ class Agent:
                 if verify_ed25519_signature(sig_bytes, signable, ed25519_pubkey):
                     verified = True
                     break
-            except Exception as e:
-                # Log but continue trying other signatures
-                continue
-        
+            except Exception:
+                continue  # Try next signature
+
         if not verified:
-            # Provide more detailed error message
             sig_count = len(signatures)
             raise QuerySignatureVerificationFailed(
                 f"Query signature verification failed for all {sig_count} signature(s). "
@@ -781,7 +782,7 @@ class Agent:
             raise MissingSignature()
         
         # Get subnet information
-        subnet_id, node_keys = await self._get_subnet_by_canister_async(effective_canister_id)
+        subnet_id, _ = await self._get_subnet_by_canister_async(effective_canister_id)
         
         # Check signature count
         if len(signatures) > 100:  # Reasonable upper limit
@@ -860,12 +861,10 @@ class Agent:
                 if verify_ed25519_signature(sig_bytes, signable, ed25519_pubkey):
                     verified = True
                     break
-            except Exception as e:
-                # Log but continue trying other signatures
-                continue
-        
+            except Exception:
+                continue  # Try next signature
+
         if not verified:
-            # Provide more detailed error message
             sig_count = len(signatures)
             raise QuerySignatureVerificationFailed(
                 f"Query signature verification failed for all {sig_count} signature(s). "
