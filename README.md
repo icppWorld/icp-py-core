@@ -117,6 +117,7 @@ canister.set_value(42, verify_certificate=False)
 ### Identity
 ```python
 from icp_core import Identity
+# Example: well-known Ed25519 test vector (RFC 8032); use Identity() or from_seed() for real keys
 iden = Identity(privkey="833fe62409237b9d62ec77587520911e9a759cec1d19755b7da901b96dca3d42")
 print(iden.sender().to_str())
 ```

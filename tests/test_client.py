@@ -111,9 +111,5 @@ def test_client_call_integration():
     """
     client = Client()
     canister_id = "gvbup-jyaaa-aaaah-qcdwa-cai"
-    
-    # This would need to be generated with current timestamps
-    # data = generate_valid_request_data()
-    # ret = client.call(canister_id, data)
-    # assert ret is not None
+    # Would need: data = generate_valid_request_data(); client.call(canister_id, data)
     pass

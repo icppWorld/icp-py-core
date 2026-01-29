@@ -120,8 +120,6 @@ class TestPerformanceAndRegression(unittest.TestCase):
         t0 = time.time()
         encoded = encode([{'type': Types.Vec(Types.Nat8), 'value': data}])
         t1 = time.time()
-
-        print(f"\n[Perf] 1MB Blob Encode Time: {t1-t0:.5f}s")
         # If pure loop processing, Python usually needs more than 0.5s
         self.assertLess(t1 - t0, 0.2, "Blob optimization seems inactive (too slow)")
 
